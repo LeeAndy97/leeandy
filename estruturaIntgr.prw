@@ -2,15 +2,27 @@
 
 User function EstrutIntgr()
 
-// Entender o conceito.
-// Lê a documentacao.
-// Ver os campos obrigatorios no Server.
-// Ver os pre-requisitos das demais entidade.
-// Vê os campos no Cliente.
-// Vê os requisitos de conexão.
+//   1   Entender o conceito.
+//   2   Ler a documentacao.
+//   3   Identificar os campos obrigatorios no Server.
+//   4   Identificar os pre-requisitos das demais entidade.
+//   5   Identificar os campos no Cliente.
+//   6   Ver os requisitos de conexão.
+//   7   Criar função rest de base com as requisição de conexão (token , headers).
+//   8   Definir a formacao dos ID's no Cliente qui será enviado ao Server.
+    
+//   9   Criar uma tabela de log de retorno da entidade.
+//  10   Criar condição para gravar o retorno de log da Entidade.
+//  11   Criar tela para visualização do Log.
+    
+//  12   Criar Função para Marcacao de Inclusão ou Alteração da Entidade.
+//  13   Identificar o Pontos de Inclusão e/ou alteracao no Cliente.
+    
+//  14   Criar função para listar e marcar a carga inicial da Entidade.
+//  15   Criar função para listar e enviar a os registro marcados da Entidade.
 
 
-// Enviar Carga Inicial das entidades, do principal ao mais especificos -
+// Enviar Carga Inicial das entidades, do principal ao mais especificos-
 // Enviar por Filial para todas as filiais.
 
 // Enviar Carga Inicial. Devera capaz de executar por tela. // ou por Job.(Schedule)
@@ -18,10 +30,6 @@ User function EstrutIntgr()
     // Preparar, asinalar os registros da carga Inicial. do Principal entidade.
     // Listar e Enviar os registros asinalados.
     // Gravar Log de Retorno.
-
-    // Criar uma tabela de log de retorno da entidade.
-    // Criar condição para gravar o retorno de log da Entidade.
-    // Criar tela para visualização do Log. 
 
 // Enviar atualização por Schedule.
     // Identitificar os pontos de Manutenção da Entidade Principal. Ponto em Função padrão, Customizado ou Webservices.
@@ -37,11 +45,8 @@ Return
 
 
 
-
-
-
 /*/{Protheus.doc} INICI0
-    Envio em massa de cliente para a Neocredit para atualização de dados de crédito
+    Envio em massa de Dados para atualização.
     @type function
     @version 1.0
     @author Daniel Scheeren - Gruppe
