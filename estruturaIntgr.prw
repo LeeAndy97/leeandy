@@ -7,19 +7,19 @@ User function EstrutIntgr()
 //   3   Identificar os campos obrigatorios no Server.
 //   4   Identificar os pre-requisitos das demais entidade.
 //   5   Identificar os campos no Cliente.
-//   6   Ver os requisitos de conex„o.
-//   7   Criar funÁ„o rest de base com as requisiÁ„o de conex„o (token , headers).
-//   8   Definir a formacao dos ID's no Cliente qui ser· enviado ao Server.
+//   6   Ver os requisitos de conex√£o.
+//   7   Criar fun√ß√£o rest de base com as requisi√ß√£o de conex√£o (token , headers).
+//   8   Definir a formacao dos ID's no Cliente qui ser√° enviado ao Server com base no modo de compatilhamento das tabelas.
     
 //   9   Criar uma tabela de log de retorno da entidade.
-//  10   Criar condiÁ„o para gravar o retorno de log da Entidade.
-//  11   Criar tela para visualizaÁ„o do Log.
+//  10   Criar condi√ß√£o para gravar o retorno de log da Entidade.
+//  11   Criar tela para visualiza√ß√£o do Log.
     
-//  12   Criar FunÁ„o para Marcacao de Inclus„o ou AlteraÁ„o da Entidade.
-//  13   Identificar o Pontos de Inclus„o e/ou alteracao no Cliente.
+//  12   Identificar condi√ß√µes para Marcar e Criar Fun√ß√£o para Marcacao de Inclus√£o ou Altera√ß√£o da Entidade.
+//  13   Identificar o Pontos de Inclus√£o e/ou alteracao no Cliente.
     
-//  14   Criar funÁ„o para listar e marcar a carga inicial da Entidade.
-//  15   Criar funÁ„o para listar e enviar a os registro marcados da Entidade.
+//  14   Criar fun√ß√£o para listar e marcar a carga inicial da Entidade.
+//  15   Criar fun√ß√£o para listar e enviar a os registro marcados da Entidade.
 
 
 // Enviar Carga Inicial das entidades, do principal ao mais especificos-
@@ -31,10 +31,10 @@ User function EstrutIntgr()
     // Listar e Enviar os registros asinalados.
     // Gravar Log de Retorno.
 
-// Enviar atualizaÁ„o por Schedule.
-    // Identitificar os pontos de ManutenÁ„o da Entidade Principal. Ponto em FunÁ„o padr„o, Customizado ou Webservices.
-    // Asinalar registros quando havera manutenÁ„o. executado por filial.
-    // Listar os registros asinalados e enviar as requisiÁıes.
+// Enviar atualiza√ß√£o por Schedule.
+    // Identitificar os pontos de Manuten√ß√£o da Entidade Principal. Ponto em Fun√ß√£o padr√£o, Customizado ou Webservices.
+    // Asinalar registros quando havera manuten√ß√£o. executado por filial.
+    // Listar os registros asinalados e enviar as requisi√ß√µes.
     // Gravar Log de Retorno.
 
 Return
@@ -46,7 +46,7 @@ Return
 
 
 /*/{Protheus.doc} INICI0
-    Envio em massa de Dados para atualizaÁ„o.
+    Envio em massa de Dados para atualiza√ß√£o.
     @type function
     @version 1.0
     @author Daniel Scheeren - Gruppe
@@ -61,7 +61,7 @@ User Function INICI()
     Local oWindow, oPanelWnd, oFWLayerMain, oPanel, oGetGrid
     // busca os clientes com limite vencido 
     Local lLimitVenc := .T.
-    // data ultima compra atÈ
+    // data ultima compra at√©
     Local dDataUltCo := FirstDate(Date())
     // Local cQuery    := ""
     Private cAliasTmp := GetNextAlias()
@@ -75,12 +75,12 @@ User Function INICI()
     //  1= caracter, data, numerico
     //  2= combobox
     //  4= checkbox
-    //  6= diretÛrio
-    //            tipo, pergunta,                              valor inicial, picture, validaÁ„o,          F3, edit·vel,   tamanho
+    //  6= diret√≥rio
+    //            tipo, pergunta,                              valor inicial, picture, valida√ß√£o,          F3, edit√°vel,   tamanho
     aadd(aPergs, {4,    "Somente com limite vencido ?"     ,   lLimitVenc,    ""  ,                                        80 ,    .F., .F.})
     aadd(aPergs, {1,    "Dt da ultima compra a partir de ?",   dDataUltCo,    "@D",    "!Empty(MV_PAR02)", "", ".T.",      80 ,    .F.})
 
-    If Parambox(aPergs, "Informe os par‚metros de filtro:", ,,,.F.)//,300,3, )
+    If Parambox(aPergs, "Informe os par√¢metros de filtro:", ,,,.F.)//,300,3, )
 
         MontaDados()
 
@@ -103,13 +103,13 @@ User Function INICI()
     
         oPanelWnd := oWindow:GetPanelMain()
 
-        // ----- cria o conteiner principal onde ser„o apresentados os browses -----
+        // ----- cria o conteiner principal onde ser√£o apresentados os browses -----
         oFWLayerMain := FWLayer():New()
         oFWLayerMain:Init(oPanelWnd, .F.)
         oFWLayerMain:AddCollumn( 'ALL', 80, .T., 'UP' )
         oPanel := oFWLayerMain:GetColPanel( 'ALL', 'UP' )
 
-        // cria grid de seleÁ„o dos clientes para envio
+        // cria grid de sele√ß√£o dos clientes para envio
         oGetGrid := FWMarkBrowse():New()
         oGetGrid:SetOwner(oPanel)
         oGetGrid:SetIgnoreARotina(.T.)
@@ -131,7 +131,7 @@ User Function INICI()
         oGetGrid:bAllMark := { || InvertMark(oGetGrid:Mark()), oGetGrid:Refresh(.T.)  }
 
         
-        // define o campo que sera utilizado para a marcaÁ„o
+        // define o campo que sera utilizado para a marca√ß√£o
         oGetGrid:SetMark(cMark, cAliasTmp, "OK")
         oGetGrid:SetFieldMark('OK')
 
@@ -223,7 +223,7 @@ Return Nil
 
 
 /*/{Protheus.doc} MontaDados
-Monta dados da tabela para seleÁ„o
+Monta dados da tabela para sele√ß√£o
     @type function
     @version 1.0
     @author Daniel Scheeren - Gruppe
@@ -232,7 +232,7 @@ Monta dados da tabela para seleÁ„o
     /*/
 Static Function MontaDados()
 
-    // cria tabela tempor·ria
+    // cria tabela tempor√°ria
     Local oTempTable := FWTemporaryTable():New(cAliasTmp)
     Local cAliasSA1  := GetNextAlias()
     Local aFields := {}
@@ -241,7 +241,7 @@ Static Function MontaDados()
 
     If( Select(cAliasSA1) != 0, (cAliasSA1)->(DbCloseArea()), )
 
-    // adiciona no array das colunas as que ser„o incluidas (Nome do Campo, Tipo do Campo, Tamanho, Decimais)
+    // adiciona no array das colunas as que ser√£o incluidas (Nome do Campo, Tipo do Campo, Tamanho, Decimais)
     aadd(aFields, {"OK",         "C", 2,                      0})
     aadd(aFields, {"M0_CODIGO",  "C", 4, 0})
     aadd(aFields, {"M0_NOME",    "C", 30,    0})
@@ -253,7 +253,7 @@ Static Function MontaDados()
     oTempTable:AddIndex("1", {"M0_CODIGO", "M0_CODFIL" })
     oTempTable:Create()
 
-    // cabeÁalho
+    // cabe√ßalho
     DbSelectArea("SX3")
     SX3->(DbSetOrder(2))    // 2- X3_CAMPO
     
@@ -263,7 +263,7 @@ Static Function MontaDados()
     //[3] - Tipo
     //[4] - Tamanho
     //[5] - Decimais
-    //[6] - M·scara
+    //[6] - M√°scara
  
 
     aadd(aHeader, {"Cod. Empresa", aFields[2, 1], aFields[2, 2], aFields[2, 3], aFields[2, 4], "@!"})
@@ -284,13 +284,13 @@ Static Function MontaDados()
         aadd(aStruct, oColumn)
     Next
 
-    // // tabela tempor·ria para apresentaÁ„o de dados na grid
+    // // tabela tempor√°ria para apresenta√ß√£o de dados na grid
     // cQuery := " SELECT * "
     // cQuery += " FROM " + RetSQlTab("SA1")
     // cQuery += " WHERE SA1.D_E_L_E_T_ = '' "
     // cQuery += " AND SA1.A1_FILIAL = '" + FWxFilial("SA1") + "' "
 
-    // // filtra limite de crÈdito vencido
+    // // filtra limite de cr√©dito vencido
     // If MV_PAR01
     //     cQuery += " AND A1_VENCLC < '" + DToS(Date()) + "' "
     // EndIf
@@ -322,7 +322,7 @@ Return
 
 
 /*/{Protheus.doc} InvertMark
-    Inverte marcaÁ„o ao clicar no header
+    Inverte marca√ß√£o ao clicar no header
     @type function
     @version 1.0
     @author Daniel Scheeren - Gruppe
