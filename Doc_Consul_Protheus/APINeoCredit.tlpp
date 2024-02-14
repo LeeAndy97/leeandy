@@ -1,0 +1,2953 @@
+#Include "Tlpp-Core.th"
+#Include "Tlpp-Rest.th"
+#Include "Protheus.ch"
+
+#Define enter Chr(13) + Chr(10)
+
+/*/{Protheus.doc} NeoCredit
+    Classe rest para integração com a NeoCredit
+    @type class
+    @version 1.0
+    @author Daniel Scheeren - Gruppe
+    @since 12/05/2022
+    /*/
+Class NeoCredit
+
+    // Construtor
+    public Method New() CONSTRUCTOR
+
+    // Endpoint para retorno de análise/reanalise de crédito do cliente realizada pela Neocredit (webhook)
+    @Post("neocredit/resultado-analise-credito/:cFilEmpresa")
+    public Method PostResultadoAnaliseCredito()
+
+    // Endpoint para retorno de análise/reanalise de pedido realizada pela Neocredit (webhook)
+    @Post("neocredit/resultado-analise-pedido/:cFilEmpresa")
+    public Method PostResultadoAnalisePedido()
+
+    // Endpoint para retorno de análise proativa de cliente realizada pela Neocredit (webhook)
+    @Post("neocredit/resultado-analise-proativa/:cFilEmpresa")
+    public Method PostResultadoAnaliseProativa()
+
+    // Endpoint para consulta de dados cadastrais e financeiros de clientes
+    @Get("neocredit/consulta-historico/:cFilEmpresa")
+    // @Get("neocredit/consulta-historico")
+    public Method GetConsultaHistorico()
+
+    // Endpoint para consulta de e-mail do cliente
+    @Get("neocredit/consulta-email/:cFilEmpresa")
+    // @Get("neocredit/consulta-email")
+    public Method GetConsultaEmail()
+
+    // Endpoint para consulta de telefone do cliente
+    @Get("neocredit/consulta-telefone/:cFilEmpresa")
+    // @Get("neocredit/consulta-telefone")
+    public Method GetConsultaTelefone()
+
+    // Endpoint para consulta de e-mail do cliente
+    @Get("neocredit/consulta-endereco/:cFilEmpresa")
+    // @Get("neocredit/consulta-endereco")
+    public Method GetConsultaEndereco()
+
+    // Endpoint para consulta de e-mail do cliente
+    @Get("neocredit/consulta-dados-cliente/:cFilEmpresa")
+    public Method GetConsultaDadosCliente()
+
+EndClass
+
+/*/{Protheus.doc} NeoCredit::New
+    Contrutor da classe
+    @type method
+    @version 1.0
+    @author Daniel Scheeren - Gruppe
+    @since 12/05/2022
+    @return variant, return_description
+    /*/
+Method New() Class NeoCredit
+Return
+
+
+/*/{Protheus.doc} NeoCredit::PostResultadoAnaliseCredito
+    Retorna análise/reanálise de crédito do cliente
+    @type method
+    @version 1.0
+    @author Daniel Scheeren - Gruppe
+    @since 12/05/2022
+    @return variant, return_description
+    /*/
+Method PostResultadoAnaliseCredito() Class NeoCredit
+
+    // retorno do processo
+    Local lRet              := .T.
+    Local nX
+    // código de erro
+    Local cCodErro          := 200  // OK
+    // body json
+    Local jBody             := JsonObject():new()
+    Local jHeader           := JsonObject():new()
+    Local jParams           := JsonObject():new()
+    // body retorno
+    Local jResponse         := JsonObject():new()
+    Local cStatAprov        := ""
+    Local cMensagemPolitica := ""
+    Local lCredito          := .T.
+    Local lAvalCred         := .T.
+    Local lEstoque          := .T.
+	Local nQtdLib           := 0
+
+    Private cErrorLog         := ""
+    Private bLastError        := {|oError| cErrorLog := oError:Description + oError:ErrorStack, Break(oError)}
+    Private oPrint
+    Private oFile
+    Private oFileErase
+    // Default oRest := JsonObject():New()
+
+    // If( Valtype(oRest) == "O")
+
+        // grava dados do body recebido
+        jHeader := oRest:GetHeaderRequest()
+        jBody:FromJson(oRest:GetBodyRequest())
+        jParams := oRest:getPathParamsRequest()
+
+    // Else   // Usado para testes
+    //     // Usando para Testes
+    //     jHeader['cnpj'] := "04368898000106"
+    //     jBody["id_analise"] := "860466320"
+    //     jBody["status"] := "APROVADO"
+    //     jBody["classificacao_risco"] := "E"
+    //     jBody["limite_aprovado"] := 2000
+    //     jBody["score"] := 590
+    //     jBody["data_validade_limite_credito"] := '05/03/2024'
+    //     jBody["observacao"] := 'Testes - Observacao'
+
+    // EndIf
+
+    
+    ErrorBlock(bLastError)
+
+    Begin Sequence
+
+        // validações
+        If jBody:ToJson() != "{}"
+            
+            // // valida se recebeu o código identificador da empresa
+            // If jParams:HasProperty("cFilEmpresa") .and. !Empty(jParams['cFilEmpresa'])
+
+                If jBody:HasProperty("id_analise") .and. !Empty(jBody['id_analise'])
+
+                    // empresa para consulta
+                    // cFilAnt   := AllTrim(jParams['cFilEmpresa'])
+                    // nRecnoZN1 := Val(jHeader['recno'])
+
+                    // dados do body
+                    cIdAnalise              := DecodeUtf8(AllTrim(jBody['id_analise']))             // Status do Processo
+                    cStatAprov              := DecodeUtf8(AllTrim(jBody['status']))             // Status do Processo
+                    cRisco                  := DecodeUtf8(AllTrim(jBody['classificacao_risco']))              // Classificação de risco do cliente
+                    nValorLimiteAprovado    := jBody['limite_aprovado']                          // Valor de limite aprovado
+                    nScore                  := jBody['score']                                   // Score
+                    dValidadeLimite         := If( jBody:HasProperty('data_validade_limite_credito'), CToD(jBody['data_validade_limite_credito']), SToD(''))                 // Data de validade do limite ("dd/mm/aaaa")
+                    cObservacao       := jBody['observacao']                       // observacao
+
+                    // grava log
+                    fLogMsg("Rertorno de analise de CREDITO ID " + cIdAnalise + " da NeoCredit.", "01")
+                
+                    DbSelectArea("ZN1")
+                    ZN1->(DbSetOrder(3))
+                    If ZN1->(DbSeek( FWxFilial("ZN1")+ PadR(cIdAnalise, TamSX3("ZN1_ID_NC")[1]) ))
+
+
+                        DbSelectArea("SA1")
+                        SA1->(DbSetOrder(3))    // 3- A1_FILIAL, A1_CGC
+                        If SA1->(DbSeek( FWxFilial("SA1") + PadR( ZN1->ZN1_CGC, TamSX3("A1_CGC")[1]) ))
+                            RecLock("SA1", .F.)
+                                SA1->A1_RISCO   := cRisco
+                                SA1->A1_LC      := nValorLimiteAprovado
+                                If !Empty(dValidadeLimite)
+                                    SA1->A1_VENCLC  := dValidadeLimite
+                                EndIf
+                                // SA1->A1_ZLNKREL := cLinkRelatorio
+                                
+                                // flag que indica ter efetuado uma análise inicial do cliente
+                                If !SA1->A1_ZINTNEO
+                                    SA1->A1_ZINTNEO := .T.
+                                EndIf
+
+                                If !Empty(cObservacao)
+                                    // SA1->A1_ZPARFIN := AllTrim(SA1->A1_ZPARFIN) + enter + "[" + DToC(Date()) + "-" + Time() + "] - Retorno Neocredit Consulta Cliente: " + cMensagemPolitica
+                                    // SA1->A1_ZPARFIN := AllTrim(SA1->A1_ZPARFIN) + enter + "[NEOCREDIT] - " + cObservacao
+                                EndIf
+                            SA1->(MsUnlock())
+                        EndIf
+
+
+                        RecLock("ZN1", .F.)
+                            ZN1->ZN1_STATUS := cStatAprov
+                            ZN1->ZN1_RISCO  := cRisco
+                            ZN1->ZN1_VLLMTA := nValorLimiteAprovado
+                            ZN1->ZN1_SCORE  := nScore
+                            ZN1->ZN1_DTVLDL := dValidadeLimite
+                            ZN1->ZN1_MENPOL := cObservacao 
+                            // ZN1->ZN1_RETANA := "C"                  // Indica de qual webhook veio a analise (C=Cliente; P=Pedido; A=Proativo)
+                            ZN1->ZN1_DTRETO := Date()
+                            ZN1->ZN1_HRRETO := Time()
+                            ZN1->ZN1_JRETOR := DecodeUtf8(jBody:ToJson())
+                            ZN1->ZN1_MENSAG := "ANÁLISE RETORNADA"
+                            // ZN1->ZN1_LNKREL := cLinkRelatorio
+                        ZN1->(MsUnlock())
+
+                    EndIf
+
+                    // se não houver informação de pedido, foi enviado somente o cliente para análise
+                    If !Empty(ZN1->ZN1_PEDIDO)
+
+                        DbSelectArea("SC5")
+                        SC5->(DbSetOrder(1))    // 1- C5_FILIAL, C5_NUM, R_E_C_N_O_, D_E_L_E_T_
+
+                        DbSelectArea("SC6")
+                        SC6->(DbSetOrder(1))	// 1- C6_FILIAL, C6_NUM, C6_ITEM, C6_PRODUTO, R_E_C_N_O_, D_E_L_E_T_
+
+                        DbSelectArea("SC9")
+                        SC9->(DbSetOrder(1))	// 1- C9_FILIAL + C9_PEDIDO + C9_ITEM, R_E_C_N_O_, D_E_L_E_T_
+
+                        // posiciona no pedido de venda
+                        If SC5->(DbSeek(FWxFilial("SC5") + ZN1->ZN1_PEDIDO))
+
+                            // atualiza etapa conforme retorno da neocredit
+                            If cStatAprov == "APROVADO"
+                                // grava status integração
+                                RecLock("ZN1", .F.)
+                                    ZN1->ZN1_MENSAG := "PEDIDO LIBERADO"
+                                ZN1->(MsUnlock())
+
+                                // libera crédito
+                                lCredito  := .F.        // TODO temporário devido à analise de crédito por parte da neocredit não estar 100% correta
+                                // não avalia crédito
+                                lAvalCred := .F.
+
+                                // // atualiza etapa do pedido conforme regras.
+                                // U_UpStepPV("NEOCREDIT-APROVADO")
+                                
+                                // grava log
+                                fLogMsg("Pedido de venda liberado! Retorno da analise: " + cStatAprov, "02")
+
+                            ElseIf cStatAprov == "DERIVAR"
+                                // grava status integração
+                                RecLock("ZN1", .F.)
+                                    ZN1->ZN1_MENSAG := "PEDIDO DERIVAR"
+                                ZN1->(MsUnlock())
+                                
+                                // não libera crédito
+                                lCredito := .F.
+                                // não avalia crédito
+                                lAvalCred := .F.
+                                
+                                // // atualiza etapa do pedido conforme regras.
+                                // U_UpStepPV("NEOCREDIT-DERIVAR")
+
+                                // grava log
+                                fLogMsg("Pedido de venda nao liberado por limite de credito inferior! Retorno da analise: " + cStatAprov, "03")
+
+                            Else
+                                // grava status integração
+                                RecLock("ZN1", .F.)
+                                    ZN1->ZN1_MENSAG := "PEDIDO REPROVADO"
+                                ZN1->(MsUnlock())
+                                
+                                // não libera crédito
+                                lCredito := .F.
+                                // não avalia crédito
+                                lAvalCred := .F.
+                                
+                                // // atualiza etapa do pedido conforme regras.
+                                // U_UpStepPV("NEOCREDIT-REPROVADO")
+
+                                // grava log
+                                fLogMsg("Pedido de venda nao liberado por limite de credito inferior! Retorno da analise: " + cStatAprov, "04")
+                            EndIf
+
+                            // realiza liberação de crédito
+                            If SC6->(DbSeek(FWxFilial('SC6') + SC5->C5_NUM))
+
+                                Begin Transaction
+
+                                    // percorre todos os itens
+                                    While ! SC6->(Eof()) .And. SC6->C6_FILIAL == FWxFilial('SC6') .And. SC6->C6_NUM == SC5->C5_NUM
+
+                                        nQtdLib := 0
+                                        // posiciona na liberação do item do pedido e estorna a liberação, pois gera liberação automática
+                                        If SC9->(DbSeek(FWxFilial('SC9')+SC6->C6_NUM+SC6->C6_ITEM))
+                                            While  !SC9->(Eof()) .AND. SC9->(C9_FILIAL+C9_PEDIDO+C9_ITEM) == FWxFilial('SC9')+SC6->(C6_NUM+C6_ITEM)
+                                                // soma quantidade liberada para reliberar a mesma quantidade (pedidos de entrega futura liberam parcialmente)
+                                                nQtdLib += SC9->C9_QTDLIB
+                                                
+                                                // remove liberação
+                                                SC9->(a460Estorna())
+                                                SC9->(DbSkip())
+                                            EndDo
+                                        Else
+                                            nQtdLib := SC6->C6_QTDVEN
+                                        EndIf
+
+                                        // Recno Item
+                                        // Quantidade a liberar
+                                        // Libera crédito
+                                        // Libera estoque
+                                        // Permite analisar o crédito
+                                        // Permite analisar o estoque
+                                        // Ajusta quantidade conforme disponível
+                                        MaLibDoFat(SC6->(Recno()), nQtdLib, @lCredito, @lEstoque, lAvalCred, .T., .F.)
+
+                                        SC6->(DbSkip())
+                                    End
+
+                                    // libera SC5
+                                    MaLiberOk({SC5->C5_NUM}, .F.)
+
+                                End Transaction
+                            EndIf
+
+                            // // atualiza a etapa conforme regras padrões (cai bloqueio de crédito ou segue para listagem)
+                            // U_UpStepPV("NEOCREDIT")
+
+                        EndIf
+                    EndIf
+
+                    jResponse["message"] := "Recebido retorno de analise de crédito de cliente."
+                    
+                Else
+                    lRet                 := .F.
+                    cCodErro             := 400 // Bad Request
+                    jResponse["message"] := "Parâmetro de recno (header params) não informado."
+                    // grava log
+                    fLogMsg(jResponse["message"], "05")
+                EndIf
+            // Else
+            //     lRet                 := .F.
+            //     cCodErro             := 400 // Bad Request
+            //     jResponse["message"] := "Parâmetro da empresa (path params) não informado."
+            //     // grava log
+            //     fLogMsg(jResponse["message"], "06")
+            // EndIf
+        Else
+            lRet                 := .F.
+            cCodErro             := 400 // Bad Request
+            jResponse["message"] := "Não foi possível ler o conteúdo do body."
+            // grava log
+            fLogMsg(jResponse["message"], "07")
+        EndIf
+
+    Recover
+
+        lRet                 := .F.
+        cCodErro             := 500 // Bad Request
+        jResponse["message"] := "Erro interno: " + cErrorLog
+        // grava log
+        fLogMsg(jResponse["message"], "08")
+    End Sequence
+
+
+    // If !Empty(cErrorLog)
+    //     vrainfo("ERRRRRROOOOOOOOO", cErrorLog)
+
+    //     lRet                 := .F.
+    //     cCodErro             := 500 // Bad Request
+    //     jResponse["message"] := "Erro interno: " + cErrorLog
+    //     // grava log
+    //     FwLogMsg("INFO", /*cTransactionId*/, "NEOCREDIT", FunName(), "", "05", jResponse["message"], 0, 0, {})
+    // EndIf
+
+    // atualiza status de retorno
+    jResponse["success"] := lRet
+
+    // If( Valtype(oRest) == "O")
+
+        // status code
+        oRest:SetStatusCode(cCodErro)
+
+        // retorno
+        oRest:SetResponse( jResponse:ToJson() )
+
+    // EndIf
+
+Return .T.
+
+/*/{Protheus.doc} NeoCredit::PostResultadoAnalisePedido
+    Retorna análise/reanálise de pedido
+    @type method
+    @version 1.0
+    @author Daniel Scheeren - Gruppe
+    @since 13/05/2022
+    @return variant, return_description
+    /*/
+Method PostResultadoAnalisePedido() Class NeoCredit
+
+    // retorno do processo
+    Local lRet           := .T.
+
+    // código de erro
+    Local cCodErro       := 200  // OK
+    // body json
+    Local jBody          := JsonObject():new()
+    Local jHeader        := JsonObject():new()
+    Local jParams        := JsonObject():new()
+    // body retorno
+    Local jResponse      := JsonObject():new()
+
+    Private oPrint
+    Private oFile
+    Private oFileErase
+    // Default oRest := JsonObject():New()
+
+    // If( Valtype(oRest) == "O")
+
+        // grava dados do body recebido
+        jHeader := oRest:GetHeaderRequest()
+        jBody:FromJson(oRest:GetBodyRequest())
+        jParams := oRest:getPathParamsRequest()
+
+    // Else
+    //     // Usando para Testes
+    //     jHeader['cnpj'] := "00097813000141"
+    //     jBody["id_analise"] := "860146109"
+    //     jBody["status"] := "APROVAR"
+    //     jBody["classificacao_risco"] := "E"
+    //     jBody["limite_aprovado"] := 2000
+    //     jBody["score"] := 590
+    //     jBody["data_validade_limite_credito"] := '05/03/2024'
+    //     jBody["observacao"] := 'Testes - Observacao'
+
+    // EndIf
+
+    // validações
+    If jHeader:ToJson() != "{}" .and. jBody:ToJson() != "{}"
+
+            
+        If jBody:HasProperty("id_analise") .and. !Empty(jBody['id_analise'])
+
+                // dados do body
+                cIdAnalise              := DecodeUtf8(AllTrim(jBody['id_analise']))             // Status do Processo
+                cStatAprov              := DecodeUtf8(AllTrim(jBody['status']))             // Status do Processo
+
+            // grava log
+            fLogMsg("Rertorno de analise de PEDIDO " + cIdAnalise + " da NeoCredit.", "01")
+            
+            DbSelectArea("ZN1")
+            ZN1->(DbSetOrder(3))
+            If ZN1->(DbSeek( PadR(FWxFilial("ZN1"), TamSX3("ZN1_FILIAL")[1]) + PadR(cIdAnalise, TamSX3("ZN1_ID_NC")[1]) ))
+
+                // Inicia StarJob.
+                // Recebe cEmpPed, cFilPed, cIdAnalise, oRest,
+                // Inicia uma thread na Empresa e Filial do Pedido, Atualizar a Analise e Liberar ou não o Pedido. 
+                // Retorna JResponse , cCodErro. 
+                StartJob("U_ResultPedido", GetEnvServer(), .T., ZN1->ZN1_EMPPED, ZN1->ZN1_FILPED, ZN1->ZN1_ID_NC, cStatAprov, jBody)
+
+            EndIf
+
+            jResponse["message"] := "Recebido retorno de analise do pedido."
+            
+        Else
+            lRet                 := .F.
+            cCodErro             := 400 // Bad Request
+            jResponse["message"] := "Parâmetro de recno (header params) não informado."
+            // grava log
+            fLogMsg(jResponse["message"], "05")
+        EndIf
+
+    Else
+        lRet                 := .F.
+        cCodErro             := 400 // Bad Request
+        jResponse["message"] := "Não foi possível ler o conteúdo do body."
+        // grava log
+        fLogMsg(jResponse["message"], "07")
+    EndIf
+
+
+    // atualiza status de retorno
+    jResponse["success"] := lRet
+
+    // If( Valtype(oRest) == "O")
+
+        // status code
+        oRest:SetStatusCode(cCodErro)
+
+        // retorno
+        oRest:SetResponse( jResponse:ToJson() )
+
+    // EndIf
+
+
+Return .T.
+
+
+/*/{Protheus.doc} User Function ResultPedido
+    (long_description)
+    @type  Function
+    @author user
+    @since 18/01/2024
+    @version version
+    @param param_name, param_type, param_descr
+    @return return_var, return_type, return_description
+    @example
+    (examples)
+    @see (links_or_references)
+    /*/
+User Function ResultPedido(cEmpPed, cEmpFil, cIdAnalise, cStatAprov, jBody)
+    
+
+// Local cMensagemPolitica := ""
+Local lCredito          := .T.
+Local lAvalCred         := .T.
+Local lEstoque          := .T.
+Local nQtdLib           := 0
+
+
+	RpcSetType(3)
+	// RpcSetEnv(cEmpPed, cEmpPed)
+    RpcSetEnv(cEmpPed, cEmpFil, "NEOCREDIT", "KAPAZI@2023","FAT",GetEnvServer(), {}, .F./*lShowFinal*/, .T./*lAbend*/, .T./*lOpenSX*/, .T./*lConnect*/ )
+
+    DbSelectArea("ZN1")
+    ZN1->(DbSetOrder(3))
+    If ZN1->(DbSeek( PadR(FWxFilial("ZN1"), TamSX3("ZN1_FILIAL")[1]) + PadR(cIdAnalise, TamSX3("ZN1_ID_NC")[1]) ))
+
+
+        RecLock("ZN1", .F.)
+            ZN1->ZN1_STATUS := cStatAprov
+            // ZN1->ZN1_RETANA := "P"                  // Indica de qual webhook veio a analise (C=Cliente; P=Pedido; A=Proativo)
+            ZN1->ZN1_DTRETO := Date()
+            ZN1->ZN1_HRRETO := Time()
+            ZN1->ZN1_JRETOR := DecodeUtf8(jBody:ToJson())
+            ZN1->ZN1_MENSAG := "ANÁLISE RETORNADA"
+        ZN1->(MsUnlock())
+
+
+        DbSelectArea("SC5")
+        SC5->(DbSetOrder(1))
+
+        DbSelectArea("SC6")
+        SC6->(DbSetOrder(1))	// 1- C6_FILIAL, C6_NUM, C6_ITEM, C6_PRODUTO, R_E_C_N_O_, D_E_L_E_T_
+
+        DbSelectArea("SC9")
+        SC9->(DbSetOrder(1))	// 1- C9_FILIAL + C9_PEDIDO + C9_ITEM, R_E_C_N_O_, D_E_L_E_T_
+
+        // posiciona no pedido de venda
+        If SC5->(DbSeek(FWxFilial("SC5") + ZN1->ZN1_PEDIDO))
+
+            // atualiza etapa conforme retorno da neocredit
+            If cStatAprov == "APROVAR"
+                // grava status integração
+                RecLock("ZN1", .F.)
+                    ZN1->ZN1_MENSAG := "PEDIDO LIBERADO"
+                ZN1->(MsUnlock())
+
+                // libera crédito
+                lCredito  := .T.
+                // não avalia crédito
+                lAvalCred := .F.
+
+                // // atualiza etapa do pedido conforme regras.
+                // U_UpStepPV("NEOCREDIT-APROVADO")
+                // cFilAnt := "02"
+                // cRettab := RetSqlTab("SA1")
+                // grava log
+                fLogMsg("Pedido de venda liberado! Retorno da analise: " + cStatAprov  + " - " + cEmpAnt  + " - " + cFilAnt , "02")
+
+            ElseIf cStatAprov == "BLOQUEADO"
+                // grava status integração
+                RecLock("ZN1", .F.)
+                    ZN1->ZN1_MENSAG := "PEDIDO BLOQUEADO"
+                ZN1->(MsUnlock())
+                
+                // não libera crédito
+                lCredito := .F.
+                // não avalia crédito
+                lAvalCred := .F.
+                
+                // // atualiza etapa do pedido conforme regras.
+                // U_UpStepPV("NEOCREDIT-DERIVAR")
+
+                // grava log
+                fLogMsg("Pedido de venda nao liberado por limite de credito inferior! Retorno da analise: " + cStatAprov, "03")
+
+            Else
+                // grava status integração
+                RecLock("ZN1", .F.)
+                    ZN1->ZN1_MENSAG := "PEDIDO REPROVADO"
+                ZN1->(MsUnlock())
+                
+                // não libera crédito
+                lCredito  := .F.
+                // naõ avalia crédito
+                lAvalCred := .F.
+
+
+                // grava log
+                fLogMsg("Pedido de venda nao liberado por limite de credito inferior! Retorno da analise: " + cStatAprov, "04")
+            EndIf
+
+            // realiza liberação de crédito
+            If SC6->(DbSeek(FWxFilial('SC6') + SC5->C5_NUM))
+
+                Begin Transaction
+
+                    // percorre todos os itens
+                    While ! SC6->(Eof()) .And. SC6->C6_FILIAL == FWxFilial('SC6') .And. SC6->C6_NUM == SC5->C5_NUM
+
+                        nQtdLib := 0
+                        // posiciona na liberação do item do pedido e estorna a liberação, pois gera liberação automática
+                        If SC9->(DbSeek(FWxFilial('SC9')+SC6->C6_NUM+SC6->C6_ITEM))
+                            While !SC9->(Eof()) .AND. SC9->(C9_FILIAL+C9_PEDIDO+C9_ITEM) == FWxFilial('SC9')+SC6->(C6_NUM+C6_ITEM)
+                                // soma quantidade liberada para reliberar a mesma quantidade (pedidos de entrega futura liberam parcialmente)
+                                nQtdLib += SC9->C9_QTDLIB
+                                
+                                // remove liberação
+                                SC9->(a460Estorna())
+                                SC9->(DbSkip())
+                            EndDo
+                        Else
+                            nQtdLib := SC6->C6_QTDVEN
+                        EndIf
+
+                        // Recno Item
+                        // Quantidade a liberar
+                        // Libera crédito
+                        // Libera estoque
+                        // Permite analisar o crédito
+                        // Permite analisar o estoque
+                        // Ajusta quantidade conforme disponível
+                        MaLibDoFat(SC6->(Recno()), nQtdLib, @lCredito, @lEstoque, lAvalCred, .T., .F.)
+
+                        SC6->(DbSkip())
+                    End
+
+                    // libera SC5
+                    MaLiberOk({SC5->C5_NUM}, .F.)
+
+                End Transaction
+            EndIf
+            
+        EndIf
+        
+    EndIf
+
+    RpcClearEnv()
+
+Return //{jResponse, cCodErro}
+
+
+/*/{Protheus.doc} NeoCredit::PostResultadoAnaliseProativa
+    Retorna análise proativa do cliente
+        Retorna avaliação básica do cliente que está perto do vencimento
+    @type method
+    @version 1.0
+    @author Daniel Scheeren - Gruppe
+    @since 02/06/2023
+    @return variant, return_description
+    /*/
+Method PostResultadoAnaliseProativa() Class NeoCredit
+
+    // retorno do processo
+    Local lRet           := .T.
+    Local nX
+    Local cMensagemPolitica := ""
+    // código de erro
+    Local cCodErro       := 200  // OK
+    // body json
+    Local jBody          := JsonObject():new()
+    Local jHeader        := JsonObject():new()
+    Local jParams        := JsonObject():new()
+    // body retorno
+    Local jResponse      := JsonObject():new()
+
+    Private oPrint
+    Private oFile
+    Private oFileErase
+
+    // grava dados do body recebido
+    jHeader := oRest:GetHeaderRequest()
+    jBody:FromJson(oRest:GetBodyRequest())
+    jParams := oRest:getPathParamsRequest()
+
+    // VarInfo("jHeader", jHeader)
+    // VarInfo("jBody", jBody)
+    // VarInfo("jParams", jParams)
+
+    // validações
+    If jHeader:ToJson() != "{}" .and. jBody:ToJson() != "{}"
+        
+        // valida se recebeu o código identificador da empresa
+        If jParams:HasProperty("cFilEmpresa") .and. !Empty(jParams['cFilEmpresa']) ;
+            
+            If jHeader:HasProperty("recno") .and. !Empty(jHeader['recno'])
+                
+                // carrega a filial correta
+                cFilAnt   := AllTrim(jParams['cFilEmpresa'])
+                nRecnoZN1 := Val(jHeader['recno'])
+
+                // dados do body
+                cDocumento              := DecodeUtf8(AllTrim(jBody:GetJsonObject('documento')))          // CPF/CNPJ
+                cStatAprov              := DecodeUtf8(AllTrim(jBody:GetJsonObject('status')))             // Status do Processo
+                dValidadeLimite         := If(jBody:HasProperty('dataValidadeLimite') .and. !Empty(jBody:GetJsonObject('dataValidadeLimite')), CToD(jBody:GetJsonObject('dataValidadeLimite')), SToD("")) // Data de validade do limite ("dd/mm/aaaa")
+                aMensagemPolitica       := jBody:GetJsonObject('mensagensPolitica')                       // Mensagens Política
+                cLinkRelatorio          := DecodeUtf8(AllTrim(jBody:GetJsonObject('urlRelatorio')))       // Link do Relatório
+
+                // tratamento mensagens
+                For nX := 1 To Len(aMensagemPolitica)
+                    cMensagemPolitica += DecodeUtf8(AllTrim(aMensagemPolitica[nX])) + enter
+                Next
+                
+                // grava log
+                fLogMsg("Rertorno de analise PROATIVA de cliente " + cDocumento + " da NeoCredit.", "01")
+                
+                DbSelectArea("SA1")
+                SA1->(DbSetOrder(3))    // 3- A1_FILIAL, A1_CGC
+                If SA1->(DbSeek(FWxFilial("SA1") + PadR(cDocumento, TamSX3("A1_CGC")[1]) ))
+                    RecLock("SA1", .F.)
+                        If !Empty(dValidadeLimite)
+                            SA1->A1_VENCLC  := dValidadeLimite
+                        EndIf
+
+                        If !Empty(cMensagemPolitica)
+                            SA1->A1_ZPARFIN := AllTrim(SA1->A1_ZPARFIN) + enter + "[NEOCREDIT] - " + cMensagemPolitica
+                        EndIf
+
+                    SA1->(MsUnlock())
+                EndIf
+                
+                DbSelectArea("SA1")
+                SA1->(DbSetOrder(3))    // 3- A1_FILIAL, A1_CGC
+                SA1->(DbSeek(FWxFilial("SA1") + PadR(cDocumento, TamSX3("A1_CGC")[1]) ))
+
+                DbSelectArea("ZN1")
+                ZN1->(DbGoTo(nRecnoZN1))
+                RecLock("ZN1", .F.)
+                    ZN1->ZN1_STATUS := cStatAprov
+                    ZN1->ZN1_DTVLDL := dValidadeLimite
+                    ZN1->ZN1_MENPOL := cMensagemPolitica
+                    // ZN1->ZN1_RETANA := "A"                  // Indica de qual webhook veio a analise (C=Cliente; P=Pedido; A=Proativo)
+                    ZN1->ZN1_DTRETO := Date()
+                    ZN1->ZN1_HRRETO := Time()
+                    ZN1->ZN1_JRETOR := DecodeUtf8(jBody:ToJson())
+                    ZN1->ZN1_MENSAG := "ANÁLISE RETORNADA"
+                    ZN1->ZN1_LNKREL := cLinkRelatorio
+                ZN1->(MsUnlock())
+
+                jResponse["message"] := "Recebido retorno de analise proativa."
+                
+            Else
+                lRet                 := .F.
+                cCodErro             := 400 // Bad Request
+                jResponse["message"] := "Parâmetro de recno (header params) não informado."
+                // grava log
+                fLogMsg(jResponse["message"], "02")
+            EndIf
+        Else
+            lRet                 := .F.
+            cCodErro             := 400 // Bad Request
+            jResponse["message"] := "Parâmetro da empresa (path params) não informado."
+            // grava log
+            fLogMsg(jResponse["message"], "03")
+        EndIf
+    Else
+        lRet                 := .F.
+        cCodErro             := 400 // Bad Request
+        jResponse["message"] := "Não foi possível ler o conteúdo do body."
+        // grava log
+        fLogMsg(jResponse["message"], "04")
+    EndIf
+
+
+    // atualiza status de retorno
+    jResponse["success"] := lRet
+    // status code
+    oRest:SetStatusCode(cCodErro)
+
+    // retorno
+    oRest:SetResponse( jResponse:ToJson() )
+
+Return .T.
+
+/*/{Protheus.doc} NeoCredit::GetConsultaHistorico
+    Consulta de dados cadastrais e financeiros do cliente
+    @type method
+    @version 1.0
+    @author Daniel Scheeren - Gruppe
+    @since 13/05/2022
+    @return variant, return_description
+    /*/
+Method GetConsultaHistorico() Class NeoCredit
+
+    // código de erro
+    Local cCodErro       := 200  // OK
+    // body json
+    // body retorno
+    Local jResponse      := JsonObject():new()
+
+    // tipos de títulos de fatura
+    // Local cTipos := FormatIn('NF,CCS', ',')  // títulos tipo CCS foram importados do Consistem
+    Local cTipos         := FormatIn(MVRECANT+","+MV_CRNEG+","+MVABATIM+","+MVIRABT+","+MVFUABT+","+MVINABT+","+MVISABT+","+MVPIABT+","+MVCFABT+","+MVPROVIS+',CCS,CNC', ',')  // títulos tipo CCS foram importados do Consistem
+    // empresas
+    Local aEmpresas      := {}
+    Local cQuery         := ""
+    Default oRest := JsonObject():new()
+
+
+    aRet := U_ConsHistorico(oRest)
+
+    jResponse := aRet[1]
+    cCodErro := aRet[2]
+
+    // If( Valtype(oRest) == "O")
+
+        // status code
+        oRest:SetStatusCode(cCodErro)
+
+        // retorno
+        oRest:SetResponse( jResponse:ToJson() )
+
+    // EndIf
+
+Return .T.
+
+
+/*/{Protheus.doc} NeoCredit::GetConsultaEmail
+    Consulta de e-mail do cliente
+    @type method
+    @version 1.0
+    @author Daniel Scheeren - Gruppe
+    @since 13/05/2022
+    @return variant, return_description
+    /*/
+Method GetConsultaEmail() Class NeoCredit
+
+    // retorno do processo
+    Local lRet           := .T.
+    // código de erro
+    Local cCodErro       := 200  // OK
+    // body json
+    Local jHeader        := JsonObject():new()
+    Local jParams        := JsonObject():new()
+    // body retorno
+    Local jResponse      := JsonObject():new()
+
+    Private oPrint
+    Private oFile
+    Private oFileErase
+
+    // grava dados do body recebido
+    jHeader := oRest:GetHeaderRequest()
+    jParams := oRest:getPathParamsRequest()
+
+
+    // validações
+    If jHeader:ToJson() != "{}"
+
+        // valida se recebeu o código identificador da empresa
+        If jParams:HasProperty("cFilEmpresa") .and. !Empty(jParams['cFilEmpresa'])
+
+            // empresa para consulta
+            cFilAnt   := AllTrim(jParams['cFilEmpresa'])
+            // cFilAnt   := "0202"
+            
+            // valida se recebeu o código identificador do cliente
+            If jHeader:HasProperty("cnpj") .and. !Empty(jHeader['cnpj']) .and. (Len(AllTrim(jHeader['cnpj'])) == 11 .or. Len(AllTrim(jHeader['cnpj'])) == 14)
+
+                // dados do cpf/cnpj
+                cCGC := AllTrim(jHeader['cnpj'])
+                
+                // grava log
+                fLogMsg("Consulta de E-MAIL de cliente " + cCGC, "01")
+
+                DbSelectArea("SA1")
+                SA1->(DbSetOrder(3))    // 3- A1_FILIAL, A1_CGC
+                If SA1->(DbSeek(FWxFilial("SA1") + PadR(cCGC, TamSX3("A1_CGC")[1]) ))
+
+                    jResponse["dados"] := JsonObject():new()
+                    jResponse["dados"]["email"]   := AllTrim(SA1->A1_EMAIL)
+                    jResponse["message"] := "Sucesso."
+
+                Else
+                    lRet                 := .F.
+                    cCodErro             := 400 // Bad Request
+                    jResponse["message"] := "Cliente não encontrado na base."
+                    // grava log
+                    fLogMsg(jResponse["message"], "02")
+                EndIf
+            Else
+                lRet                 := .F.
+                cCodErro             := 400 // Bad Request
+                jResponse["message"] := "O CPF/CNPJ informado não é válido."
+                // grava log
+                fLogMsg(jResponse["message"], "03")
+            EndIf
+         
+        Else
+            lRet                 := .F.
+            cCodErro             := 400 // Bad Request
+            jResponse["message"] := "Parâmetro da empresa não informado (path params)."
+            // grava log
+			fLogMsg(jResponse["message"], "04")
+        EndIf
+    Else
+        lRet                 := .F.
+        cCodErro             := 400 // Bad Request
+        jResponse["message"] := "Não foi possível ler o conteúdo do body."
+        // grava log
+        fLogMsg(jResponse["message"], "05")
+    EndIf
+
+
+    // atualiza status de retorno
+    jResponse["success"] := lRet
+    // status code
+    oRest:SetStatusCode(cCodErro)
+
+    // retorno
+    oRest:SetResponse( jResponse:ToJson() )
+
+Return .T.
+
+/*/{Protheus.doc} NeoCredit::GetConsultaTelefone
+    Consulta de telefone do cliente
+    @type method
+    @version 1.0
+    @author Daniel Scheeren - Gruppe
+    @since 13/05/2022
+    @return variant, return_description
+    /*/
+Method GetConsultaTelefone() Class NeoCredit
+
+    // retorno do processo
+    Local lRet           := .T.
+    // código de erro
+    Local cCodErro       := 200  // OK
+    // body json
+    Local jHeader        := JsonObject():new()
+    Local jParams        := JsonObject():new()
+    // body retorno
+    Local jResponse      := JsonObject():new()
+
+    Private oPrint
+    Private oFile
+    Private oFileErase
+
+    // grava dados do body recebido
+    jHeader := oRest:GetHeaderRequest()
+    jParams := oRest:getPathParamsRequest()
+
+    // validações
+    If jHeader:ToJson() != "{}"
+        
+        // valida se recebeu o código identificador da empresa
+        If jParams:HasProperty("cFilEmpresa") .and. !Empty(jParams['cFilEmpresa'])
+
+            // carrega a filial correta
+            cFilAnt   := AllTrim(jParams['cFilEmpresa'])
+            // cFilAnt   := "0202"
+                
+            // valida se recebeu o código identificador do cliente
+            If jHeader:HasProperty("cnpj") .and. !Empty(jHeader['cnpj']) .and. (Len(AllTrim(jHeader['cnpj'])) == 11 .or. Len(AllTrim(jHeader['cnpj'])) == 14)
+
+                // dados do cpf/cnpj
+                cCGC := AllTrim(jHeader['cnpj'])
+
+                // grava log
+                fLogMsg("Consulta de TELEFONE de cliente " + cCGC, "01")
+
+                DbSelectArea("SA1")
+                SA1->(DbSetOrder(3))    // 3- A1_FILIAL, A1_CGC
+                If SA1->(DbSeek(FWxFilial("SA1") + PadR(cCGC, TamSX3("A1_CGC")[1]) ))
+
+                    jResponse["dados"] := JsonObject():new()
+                    jResponse["dados"]["telefone"] := AllTrim(SA1->A1_DDD + SA1->A1_TEL)
+
+                    jResponse["message"] := "Sucesso."
+
+                Else
+                    lRet                 := .F.
+                    cCodErro             := 400 // Bad Request
+                    jResponse["message"] := "Cliente não encontrado na base."
+                    // grava log
+                    fLogMsg(jResponse["message"], "02")
+                EndIf
+            Else
+                lRet                 := .F.
+                cCodErro             := 400 // Bad Request
+                jResponse["message"] := "O CPF/CNPJ informado não é válido."
+                // grava log
+                fLogMsg(jResponse["message"], "03")
+            EndIf
+        
+        Else
+            lRet                 := .F.
+            cCodErro             := 400 // Bad Request
+            jResponse["message"] := "Parâmetro da empresa não informado (path params)."
+            // grava log
+			fLogMsg(jResponse["message"], "04")
+        EndIf
+    Else
+        lRet                 := .F.
+        cCodErro             := 400 // Bad Request
+        jResponse["message"] := "Não foi possível ler o conteúdo do body."
+        // grava log
+        fLogMsg(jResponse["message"], "05")
+    EndIf
+
+
+    // atualiza status de retorno
+    jResponse["success"] := lRet
+    // status code
+    oRest:SetStatusCode(cCodErro)
+
+    // retorno
+    oRest:SetResponse( jResponse:ToJson() )
+
+Return .T.
+
+/*/{Protheus.doc} NeoCredit::GetConsultaEndereco
+    Consulta de endereco do cliente
+    @type method
+    @version 1.0
+    @author Daniel Scheeren - Gruppe
+    @since 13/05/2022
+    @return variant, return_description
+    /*/
+Method GetConsultaEndereco() Class NeoCredit
+
+    // retorno do processo
+    Local lRet           := .T.
+    // código de erro
+    Local cCodErro       := 200  // OK
+    // body json
+    Local jHeader        := JsonObject():new()
+    Local jParams        := JsonObject():new()
+    // body retorno
+    Local jResponse      := JsonObject():new()
+
+    Private oPrint
+    Private oFile
+    Private oFileErase
+
+    // grava dados do body recebido
+    jHeader := oRest:GetHeaderRequest()
+    jParams := oRest:getPathParamsRequest()
+
+    // VarInfo("jHeader", jHeader)
+    // VarInfo("jParams", jParams)
+
+    // validações
+    If jHeader:ToJson() != "{}"
+        
+        // // valida se recebeu o código identificador da empresa
+        // If jParams:HasProperty("cFilEmpresa") .and. !Empty(jParams['cFilEmpresa'])
+
+            // empresa para consulta
+            // cFilAnt := AllTrim(jParams['cFilEmpresa'])
+            // cFilAnt   := "0202"
+            
+            // valida se recebeu o código identificador do cliente
+            If jHeader:HasProperty("cnpj") .and. !Empty(jHeader['cnpj']) .and. (Len(AllTrim(jHeader['cnpj'])) == 11 .or. Len(AllTrim(jHeader['cnpj'])) == 14)
+
+                // dados do cpf/cnpj
+                cCGC := AllTrim(jHeader['cnpj'])
+
+                // grava log
+                fLogMsg("Consulta de ENDERECO de cliente " + cCGC, "01")
+
+                DbSelectArea("SA1")
+                SA1->(DbSetOrder(3))    // 3- A1_FILIAL, A1_CGC
+                If SA1->(DbSeek(FWxFilial("SA1") + PadR(cCGC, TamSX3("A1_CGC")[1]) ))
+
+                    jResponse["dados"] := JsonObject():new()
+                    jResponse["dados"]["endereco"] := AllTrim(SA1->A1_END)
+                    jResponse["dados"]["bairro"]   := AllTrim(SA1->A1_BAIRRO)
+                    jResponse["dados"]["cidade"]   := AllTrim(SA1->A1_MUN)
+                    jResponse["dados"]["cep"]      := AllTrim(SA1->A1_CEP)
+                    jResponse["dados"]["estado"]   := AllTrim(SA1->A1_EST)
+
+                    jResponse["message"]  := "Sucesso."
+
+                Else
+                    lRet                 := .F.
+                    cCodErro             := 400 // Bad Request
+                    jResponse["message"] := "Cliente não encontrado na base."
+                    // grava log
+                    fLogMsg(jResponse["message"], "02")
+                EndIf
+            Else
+                lRet                 := .F.
+                cCodErro             := 400 // Bad Request
+                jResponse["message"] := "O CPF/CNPJ informado não é válido."
+                // grava log
+                fLogMsg(jResponse["message"], "03")
+            EndIf
+            
+        // Else
+        //     lRet                 := .F.
+        //     cCodErro             := 400 // Bad Request
+        //     jResponse["message"] := "Parâmetro da empresa não informado (path params)."
+        //     // grava log
+		// 	fLogMsg(jResponse["message"], "04")
+        // EndIf
+    Else
+        lRet                 := .F.
+        cCodErro             := 400 // Bad Request
+        jResponse["message"] := "Não foi possível ler o conteúdo do header."
+        // grava log
+        fLogMsg(jResponse["message"], "05")
+    EndIf
+
+
+    // atualiza status de retorno
+    jResponse["success"] := lRet
+    // status code
+    oRest:SetStatusCode(cCodErro)
+
+    // retorno
+    oRest:SetResponse( jResponse:ToJson() )
+
+Return .T.
+
+
+/*/{Protheus.doc} NeoCredit::GetConsultaDadosCliente
+    Consulta de e-mail do cliente
+    @type method
+    @version 1.0
+    @author Daniel Scheeren - Gruppe
+    @since 25/11/2022
+    @return variant, return_description
+    /*/
+Method GetConsultaDadosCliente() Class NeoCredit
+
+    // retorno do processo
+    Local lRet                  := .T.
+    // código de erro
+    Local cCodErro              := 200  // OK
+    // body json
+    Local jHeader               := JsonObject():new()
+    Local jParams               := JsonObject():new()
+    // body retorno
+    Local jResponse             := JsonObject():new()
+    Local nX, nY
+    Local cCGC                  := ""
+    Local cCodigoCli            := ""
+    Local cLojaCli              := ""
+    Local cDDDCliente           := ""
+    Local cTelefoneCliente      := ""
+    Local cCGCNumRegistro       := ""
+    Local cQryGenerica          := ""
+    Local cQryEmail             := ""
+    Local cQryTelefone          := ""
+    Local cQryRaizCGC           := ""
+    Local cQryReferencias       := ""
+    Local cClientesMesmaRaiz    := ""
+    Local aListaEmailCliente    := {}
+    Local aClientesMesmoEmail   := {}
+    Local aClientesMesmoTelefone:= {}
+    Local aClientesMesmaRaiz    := {}
+    Local aReferencias          := {}
+    // dominios de e-mials da metalnox a excluir da consulta (vendedores adicionam seus e-mail no cadastro de cliente)
+    Local aDominiosEmailsMtx    := StrTokArr(SuperGetMV("NC_EMLDOMN", .F., "kapazi.com.br;"), ";")
+    Local aFieldsSAOExc         := {"AO_FILIAL", "AO_CLIENTE", "AO_LOJA", "AO_TIPO", "AO_ITEM"}
+    Local aFieldsSAO            := {}
+    Local cFieldsSAO            := ""
+
+    cFiltro :=  " "
+
+    Private oPrint
+    Private oFile
+    Private oFileErase
+
+    // campos SAO
+    aEval(FWSX3Util():GetAllFields("SAO", .F.), {|cCampo| RetCamposSAOConsulta(aFieldsSAOExc, cCampo, @aFieldsSAO) } )
+    cFieldsSAO := ArrTokStr(aFieldsSAO, ",")
+
+    // grava dados do body recebido
+    jHeader := oRest:GetHeaderRequest()
+    jParams := oRest:GetPathParamsRequest()
+
+    /*  CONSULTA DE TESTES PARA ENCONTRAR CLIENTES COM MESMO E-MAIL
+
+        SELECT TRIM(SA1.A1_EMAIL) FROM SA1010 SA1
+                    INNER JOIN (SELECT * FROM SA1010 A12 WHERE D_E_L_E_T_ = '' ) AS A12
+                    ON A12.A1_EMAIL = SA1.A1_EMAIL
+                    AND A12.A1_CGC <> SA1.A1_CGC
+        WHERE SA1.D_E_L_E_T_ = ''
+        AND SA1.A1_PESSOA = 'J'
+        GROUP BY SA1.A1_EMAIL HAVING COUNT(*) > 1
+
+    */
+    
+    // validações
+    If jHeader:ToJson() != "{}"
+
+        // // valida se recebeu o código identificador da empresa
+        // If jParams:HasProperty("cFilEmpresa") .and. !Empty(jParams['cFilEmpresa'])
+
+            
+            // valida se recebeu o código identificador do cliente
+            If jHeader:HasProperty("cnpj") .and. !Empty(jHeader['cnpj']) .and. (Len(AllTrim(jHeader['cnpj'])) == 11 .or. Len(AllTrim(jHeader['cnpj'])) == 14)
+
+                // dados do cpf/cnpj
+                cCGC        := AllTrim(jHeader['cnpj'])
+                cCodigoCli  := SubStr(AllTrim(jHeader['idCLiente']), 1, TamSX3("A1_COD")[1])
+                cLojaCli    := SubStr(AllTrim(jHeader['idCLiente']), TamSX3("A1_COD")[1]+1, TamSX3("A1_LOJA")[1])
+                cDDD        := SubStr(AllTrim(jHeader['telefone']), 1, 2)
+                cTelefone        := SubStr( AllTrim(jHeader['telefone']), 3, Len( AllTrim(jHeader['telefone']) ) )
+                cEmail        :=  AllTrim(jHeader['email'])
+
+                // grava log
+                fLogMsg("Consulta de dados do cliente " + cCGC, "01")
+
+                if !Empty(cEmail)
+                    cFiltro += ".and. SA1->A1_EMAIL == cEmail "
+                endif
+                if !Empty(cTelefone)
+                    cFiltro += ".and. ( SA1->(A1_DDD+A1_TEL) == cTelefone .or. SA1->(A1_DDD+A1_TEL) == cTelefone )"
+                endif
+
+                DbSelectArea("SA1")
+                SA1->(DbSetOrder(3))    // 3- A1_FILIAL, A1_CGC
+                If SA1->(DbSeek(FWxFilial("SA1") + PadR(cCGC, TamSX3("A1_CGC")[1]) ))// .and. SA1->A1_MSBLQL != '1'
+
+                    while SA1->(!Eof()) 
+                        // // dados do cliente
+                        jResponse["dados"]                      := JsonObject():New()
+
+                        // if &("xFilial("SA1")+SA1->A1_CGC == SA1->(A1_FILIAL+A1_CGC )" + cFiltro)
+                        //     // jdocumento := JsonObject():New()
+                        //     // jemail := JsonObject():New()
+                        //     // jddd      := JsonObject():New()
+                        //     // jtelefone := JsonObject():New()
+                        //     // jendereco := JsonObject():New()
+                        //     // jbairro   := JsonObject():New()
+                        //     // jcidade            := JsonObject():New()
+                        //     // jcep               := JsonObject():New()
+                        //     // jestado            := JsonObject():New()
+                        //     // joutros_cnpjs      := JsonObject():New()
+                        //     // jreferencias_erp   := JsonObject():New()
+
+
+                        //     aAdd( aItens , jdocumento  := AllTrim(SA1->A1_CGC))
+                        //     aAdd( aItens , jemail             := AllTrim(SA1->A1_EMAIL))
+                        //     aAdd( aItens , jddd               := AllTrim(SA1->A1_DDD))
+                        //     aAdd( aItens , jtelefone          := AllTrim(SA1->A1_TEL))
+                        //     aAdd( aItens , jendereco          := AllTrim(SA1->A1_END))
+                        //     aAdd( aItens , jbairro            := AllTrim(SA1->A1_BAIRRO))
+                        //     aAdd( aItens , jcidade            := AllTrim(SA1->A1_MUN))
+                        //     aAdd( aItens , jcep               := AllTrim(SA1->A1_CEP))
+                        //     aAdd( aItens , jestado            := AllTrim(SA1->A1_EST))
+                        //     aAdd( aItens , joutros_cnpjs      := {})
+                        //     aAdd( aItens , jreferencias_erp   := {}   )
+                            
+                        // endif
+                            aAdd( jResponse["dados"]  , aItens )
+
+
+
+                        
+                        // jResponse["dados"]["documento"]         := AllTrim(SA1->A1_CGC)
+                        // jResponse["dados"]["email"]             := AllTrim(SA1->A1_EMAIL)
+                        // jResponse["dados"]["ddd"]               := AllTrim(SA1->A1_DDD)
+                        // jResponse["dados"]["telefone"]          := AllTrim(SA1->A1_TEL)
+                        // jResponse["dados"]["endereco"]          := AllTrim(SA1->A1_END)
+                        // jResponse["dados"]["bairro"]            := AllTrim(SA1->A1_BAIRRO)
+                        // jResponse["dados"]["cidade"]            := AllTrim(SA1->A1_MUN)
+                        // jResponse["dados"]["cep"]               := AllTrim(SA1->A1_CEP)
+                        // jResponse["dados"]["estado"]            := AllTrim(SA1->A1_EST)
+                        // jResponse["dados"]["outros_cnpjs"]      := {}
+                        // jResponse["dados"]["referencias_erp"]   := {}                             
+
+                        SA1->(DbSkip())
+                    end
+                    
+
+                    jResponse["message"] := "Sucesso."
+
+                Else
+                    lRet                 := .F.
+                    cCodErro             := 400 // Bad Request
+                    jResponse["message"] := "Cliente não encontrado na base."
+                    // grava log
+                    fLogMsg(jResponse["message"], "04")
+                EndIf
+            Else
+                lRet                 := .F.
+                cCodErro             := 400 // Bad Request
+                jResponse["message"] := "O CPF/CNPJ informado não é válido."
+                // grava log
+                fLogMsg(jResponse["message"], "05")
+            EndIf
+         
+        // Else
+        //     lRet                 := .F.
+        //     cCodErro             := 400 // Bad Request
+        //     jResponse["message"] := "Parâmetro da empresa não informado (path params)."
+        //     // grava log
+		// 	fLogMsg(jResponse["message"], "06")
+        // EndIf
+    Else
+        lRet                 := .F.
+        cCodErro             := 400 // Bad Request
+        jResponse["message"] := "Não foi possível ler o conteúdo do Header."
+        // grava log
+        fLogMsg(jResponse["message"], "07")
+    EndIf
+
+    // atualiza status de retorno
+    jResponse["success"] := lRet
+    // status code
+    oRest:SetStatusCode(cCodErro)
+
+    // retorno
+    oRest:SetResponse( jResponse:ToJson() )
+
+Return .T.
+
+
+
+
+
+/*/{Protheus.doc} User Function nomeFunction
+    (long_description)
+    @type  Function
+    @author user
+    @since 17/01/2024
+    @version version
+    @param param_name, param_type, param_descr
+    @return return_var, return_type, return_description
+    @example
+    (examples)
+    @see (links_or_references)
+    /*/
+User Function ConsHistorico(oRest)
+    
+    // retorno do processo
+    Local lRet           := .T.
+    Local nX
+    Local nQuant := 1
+    // código de erro
+    Local cCodErro       := 200  // OK
+    // body json
+    Local jHeader        := JsonObject():new()
+    Local jParams        := JsonObject():new()
+    // body retorno
+    Local jResponse      := JsonObject():new()
+    Local cAliasTmp      := GetNextAlias()
+    Local cAliasTmpMATR  := GetNextAlias()
+    // datas
+    Local cDt24Meses     := DToS(MonthSub(Date(), 24))
+    Local cDt12Meses     := DToS(MonthSub(Date(), 12))
+    Local cDt06Meses     := DToS(MonthSub(Date(), 6))
+    // tipos de títulos de fatura
+    // Local cTipos := FormatIn('NF,CCS', ',')  // títulos tipo CCS foram importados do Consistem
+    Local cTipos         := FormatIn(MVRECANT+","+MV_CRNEG+","+MVABATIM+","+MVIRABT+","+MVFUABT+","+MVINABT+","+MVISABT+","+MVPIABT+","+MVCFABT+","+MVPROVIS+',CCS,CNC', ',')  // títulos tipo CCS foram importados do Consistem
+    // empresas
+    Local aEmpresas      := {}
+    Local cQuery         := ""
+    // Default oRest := JsonObject():new()
+
+
+    Private oPrint
+    Private oFile
+    Private oFileErase
+
+    // empresas integradas
+    aEmpresas := {"01","02","03"}//,"04","05","06","07","08","09","10","11"}
+    nQuant := Len(aEmpresas)
+
+    // // grava dados do body recebido
+    // jHeader := oRest:GetHeaderRequest()
+    // jParams := oRest:getPathParamsRequest()
+
+        jHeader["cnpj"] := "24272921000252"
+        jHeader["idCLiente"] := ""
+        jHeader["telefone"] := "1127743004"
+        jHeader["email"] := ""
+
+    // Iif( Valtype(oRest) != "O", jHeader['cnpj'] := "09479251000175", ) Usado para teste.
+
+    Iif(Select(cAliasTmp) > 0, (cAliasTmp)->(DbCloseArea()), )
+    Iif(Select(cAliasTmpMATR) > 0, (cAliasTmpMATR)->(DbCloseArea()), )
+
+    // validações
+    If jHeader:ToJson() != "{}"
+
+        // valida se recebeu o código identificador do cliente
+        If jHeader:HasProperty("cnpj") .and. !Empty(jHeader['cnpj']) .and. (Len(AllTrim(jHeader['cnpj'])) == 11 .or. Len(AllTrim(jHeader['cnpj'])) == 14)
+
+            // dados do cpf/cnpj
+            cCGC := AllTrim(jHeader['cnpj'])
+
+            // grava log
+            fLogMsg("Cliente " + cCGC + " analise de historico.", "01")
+
+
+            // ----- CALCULA MÉDIA DE ATRASOS
+            // realiza o calculo da média de atraso do cliente, pois o padrão está considerando CNC no cálculo (Exemplo: cliente 028334)
+
+            cQueryMETR := ""
+            for nx := 1 to nQuant
+                cQueryMETR +=         " SELECT DATEDIFF(day, E1_VENCREA, E1_BAIXA) AS DIASATRASO"
+                // cQueryMETR += enter + "     FROM " + RetSQLTab("SE1") + " INNER JOIN " + RetSQLTab("SA1")
+                cQueryMETR += enter + "        FROM SE1" + aEmpresas[nx] +    "0 SE1 INNER JOIN SA1010 SA1
+                // cQueryMETR += enter + " 			ON " + RetSQLCond("SE1")
+                cQueryMETR += enter + " 			ON SE1.D_E_L_E_T_ <> '*' 
+                cQueryMETR += enter + " 				AND E1_CLIENTE = A1_COD
+                cQueryMETR += enter + " 				AND E1_LOJA = A1_LOJA 
+                cQueryMETR += enter + " 				AND E1_TIPO NOT IN " + cTipos
+                cQueryMETR += enter + " 				AND (E1_FATURA = '' OR SUBSTRING(E1_FATURA,1,6) = 'NOTFAT')
+                cQueryMETR += enter + " 				AND E1_BAIXA <> ''
+                // cQueryMETR += enter + "     WHERE " + RetSQLCond("SA1")
+                cQueryMETR += enter + "     WHERE SA1.D_E_L_E_T_ <> '*' AND A1_FILIAL = '  '
+                // cQueryMETR += enter + " AND A1_MSBLQL <> '1' "  // não bloqueado
+                cQueryMETR += enter + " AND A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQueryMETR += enter + " UNION ALL "
+                endif
+            next
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQueryMETR),cAliasTmpMATR,.F.,.T.)
+
+            nMediaAtrasos := 0
+            nCount := 0
+            While !(cAliasTmpMATR)->(Eof())
+                nCount++
+
+                // calculo da média
+                nMediaAtrasos := ( nMediaAtrasos * (nCount - 1) + (cAliasTmpMATR)->DIASATRASO ) / nCount
+
+                (cAliasTmpMATR)->(DbSkip())
+            End
+
+
+
+            nvalorTotalPago24meses := 0
+            nvalorTotalPago12meses := 0
+            nvalorTotalPago6meses  := 0
+
+            nvalorTotalAberto      := 0
+
+            nvalorTotalCompras        := 0
+            nvalorTotalCompras24meses := 0
+            nvalorTotalCompras12meses := 0
+            nvalorTotalCompras6meses  := 0
+
+            nquantidadeCompras        := 0
+            nquantidadeComprasPagas   := 0
+            nquantidadeComprasAberto  := 0
+            nquantidadeComprasPrazo   := 0
+
+            npercentualPagamentosPontuais            := 0
+            npercentualPagamentosPontuais24meses     := 0
+            npercentualPagamentosPontuais12meses     := 0
+            npercentualPagamentosPontuais6meses      := 0
+            npercentualPagamentosPagosAte5dias       := 0
+                
+            lpossuiAtrasoAberto := .F.//If((cAliasTmp)->VENC_ABERTO > 0, .T., .F.)
+            nmaiorAtraso         := 0 //(cAliasTmp)->MATRABERTO
+            nmaiorAtrasoPago     := 0 //(cAliasTmp)->MAIORATRASO
+            nmaiorAtrasoPago24meses      := 0 //(cAliasTmp)->MATRPAGO24
+            nmaiorAtrasoPago12meses      := 0 //(cAliasTmp)->MATRPAGO12
+
+
+
+            // ----- CALCULA DADOS DO CLIENTE
+            ///////////////////////////
+            ///////////////////////////            
+            // valor total pago
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select Sum(VALOR) as VLRTOTALPAGO from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select Sum(E1_VALOR) as VALOR"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter +"            and SE1.E1_SALDO = 0"
+                cQuery  +=  enter + "         AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()), )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalPago  := (cAliasTmp)->VLRTOTALPAGO
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // valor total pago ultimos 24 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select Sum(VALOR) as VLRTOTALPAGO24MES from ( "
+            for nx := 1 to nQuant
+
+                cQuery  +=  enter +"            Select Sum(E1_VALOR) as VALOR"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter +"            and SE1.E1_SALDO = 0"
+                cQuery  +=  enter + "           AND E1_BAIXA >= '" + cDt24Meses + "'
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalPago24meses  := (cAliasTmp)->VLRTOTALPAGO24MES
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // valor total pago ultimos 12 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select Sum(VALOR) as VLRTOTALPAGO12MES from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select Sum(E1_VALOR) as VALOR"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter +"            and SE1.E1_SALDO = 0"
+                cQuery  +=  enter + "           AND E1_BAIXA >= '" + cDt12Meses + "'
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalPago12meses  := (cAliasTmp)->VLRTOTALPAGO12MES
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // valor total pago ultimos 6 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select Sum(VALOR) as VLRTOTALPAGO6MES from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select Sum(E1_VALOR) as VALOR"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter +"            and SE1.E1_SALDO = 0"
+                cQuery  +=  enter + "           AND E1_BAIXA >= '" + cDt06Meses + "'
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalPago6meses  := (cAliasTmp)->VLRTOTALPAGO6MES
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // maior atraso (vencido) não pago
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select MAX(VENCREA) as MATRABERTO from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select MAX(DATEDIFF(day,E1_VENCREA, '" + DToS(Date()) + "' as VENCREA"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter +"            AND E1_SALDO > 0 "
+                cQuery  +=  enter +"            AND E1_VENCREA < '" + DToS(Date()) + "' "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalAberto  := (cAliasTmp)->MATRABERTO
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // maior atraso pago 24 meses  
+            ///////////////////////////          
+            cQuery := " "
+            cQuery  += "            Select MAX(NUMDIA) as MATRPAGO24 from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select MAX(DATEDIFF(day,E1_VENCREA, E1_BAIXA) as NUMDIA"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter +"            and SE1.E1_SALDO = 0"
+                cQuery  +=  enter + "           AND E1_BAIXA >= '" + cDt24Meses + "'
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nmaiorAtrasoPago24meses  := (cAliasTmp)->MATRPAGO24
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // maior atraso pago 12 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select MAX(NUMDIA) as MATRPAGO12 from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select MAX(DATEDIFF(day,E1_VENCREA, E1_BAIXA) as NUMDIA"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter +"            and SE1.E1_SALDO = 0"
+                cQuery  +=  enter + "           AND E1_BAIXA >= '" + cDt12Meses + "'
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nmaiorAtrasoPago12meses  := (cAliasTmp)->MATRPAGO12
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // saldo de títulos em aberto (vencidos e não vencidos)
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(SALDO) as SALDO_ABERTO from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select SUM(E1_SALDO) as SALDO"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter + "           AND E1_STATUS = 'A' "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalAberto  := (cAliasTmp)->SALDO_ABERTO
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // verifica soma de títulos vencidos em aberto (atraso em aberto) 
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(SALDO) as VENC_ABERTO from ( "
+
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select SUM(E1_SALDO) as SALDO"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter + "           AND E1_STATUS = 'A' "
+                cQuery  +=  enter + "           AND E1_VENCREA < '" + DToS(Date()) + "' "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                lpossuiAtrasoAberto := If((cAliasTmp)->VENC_ABERTO > 0, .T., .F.)
+            EndIf
+              
+                
+            ///////////////////////////
+            ///////////////////////////
+            // qtd pagamentos pontuais
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(TIT) as TOTPGTPONT from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select COUNT(E1_NUM) as TIT"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter + "           AND E1_BAIXA <= E1_VENCREA "
+                cQuery  +=  enter + "           AND E1_SALDO = 0 "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nTotalPagoPont  := (cAliasTmp)->TOTPGTPONT
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // qtd pagamentos não pontuais
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(TIT) as TOTPGTNAOPONT from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select COUNT(E1_NUM) as TIT"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter + "           AND E1_BAIXA > E1_VENCREA "
+                cQuery  +=  enter + "           AND E1_SALDO = 0 "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nTotalPagoNPont  := (cAliasTmp)->TOTPGTNAOPONT
+            EndIf
+                
+                
+            ///////////////////////////
+            ///////////////////////////
+            // qtd total de pagamentos
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(TIT) as TOTALPGTOS from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select COUNT(E1_NUM) as TIT"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter + "           AND E1_SALDO = 0 "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nTotalPago  := (cAliasTmp)->TOTALPGTOS
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // qtd pagamentos pontuais 24 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(TIT) as PGTPONT24 from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select COUNT(E1_NUM) as TIT"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter + "           AND E1_BAIXA <= E1_VENCREA "
+                cQuery  +=  enter + "           AND E1_BAIXA >= '" + cDt24Meses + "' "
+                cQuery  +=  enter + "           AND E1_SALDO = 0 "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nTotalPagoPont24  := (cAliasTmp)->PGTPONT24
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // qtd pagamentos não pontuais 24 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(TIT) as PGTNPONT24 from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select COUNT(E1_NUM) as TIT"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery += enter + "         AND E1_BAIXA > E1_VENCREA "
+                cQuery += enter + "         AND E1_BAIXA >= '" + cDt24Meses + "' "
+                cQuery += enter + "         AND E1_SALDO = 0 "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nTotalPagoNPont24  := (cAliasTmp)->PGTNPONT24
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // qtd total de pagamentos 24 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(TIT) as TOTPGTOS24 from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select COUNT(E1_NUM) as TIT"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery += enter + "         AND E1_BAIXA >= '" + cDt24Meses + "' "
+                cQuery += enter + "         AND E1_SALDO = 0 "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nTotalPago24  := (cAliasTmp)->TOTPGTOS24
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // qtd total pagamentos 12 meses  
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(TIT) as PGTOS12MESES from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select COUNT(E1_NUM) as TIT"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery += enter + "         AND E1_SALDO = 0 "
+                cQuery += enter + "         AND E1_BAIXA >= '" + cDt12Meses + "'
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nTotalPago12  := (cAliasTmp)->PGTOS12MESES
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // qtd pagamentos pontuais 12 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(TIT) as PGTPONT12 from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select COUNT(E1_NUM) as TIT"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery += enter + "         AND E1_BAIXA <= E1_VENCREA "
+                cQuery += enter + "         AND E1_BAIXA >= '" + cDt12Meses + "' "
+                cQuery += enter + "         AND E1_SALDO = 0 "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nTotalPagoPont12  := (cAliasTmp)->PGTPONT12
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // qtd pagamentos não pontuais 12 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(TIT) as PGTNPONT12 from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select COUNT(E1_NUM) as TIT"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery += enter + "         AND E1_BAIXA > E1_VENCREA "
+                cQuery += enter + "         AND E1_BAIXA >= '" + cDt12Meses + "' "
+                cQuery += enter + "         AND E1_SALDO = 0 "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nTotalPagoNPont12  := (cAliasTmp)->PGTNPONT12
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // qtd pagamentos pontuais 06 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(TIT) as PGTPONT06 from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select COUNT(E1_NUM) as TIT"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery += enter + "         AND E1_BAIXA <= E1_VENCREA "
+                cQuery += enter + "         AND E1_BAIXA >= '" + cDt06Meses + "' "
+                cQuery += enter + "         AND E1_SALDO = 0 "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nTotalPagoPont06  := (cAliasTmp)->PGTPONT06
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // qtd pagamentos não pontuais 06 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(TIT) as PGTNPONT06 from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select COUNT(E1_NUM) as TIT"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery += enter + "         AND E1_BAIXA > E1_VENCREA "
+                cQuery += enter + "         AND E1_BAIXA >= '" + cDt06Meses + "' "
+                cQuery += enter + "         AND E1_SALDO = 0 "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nTotalPagoNPont06  := (cAliasTmp)->PGTNPONT06
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            /// qtd total de pagamentos 06 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(TIT) as TOTPGTOS06 from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select COUNT(E1_NUM) as TIT"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery += enter + "         AND E1_BAIXA >= '" + cDt06Meses + "' "
+                cQuery += enter + "         AND E1_SALDO = 0 "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nTotalPago06  := (cAliasTmp)->TOTPGTOS06
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // qtd pagamentos pagos em até 5 dias nos ultimos 12 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(TIT) as PGATE5DIAS from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select COUNT(E1_NUM) as TIT"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery += enter + "         AND DATEDIFF(day, E1_BAIXA, E1_VENCREA) < 5  "
+                cQuery += enter + "         AND E1_BAIXA >= '" + cDt12Meses + "' "
+                cQuery += enter + "         AND E1_SALDO = 0 "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nTotalPago5Dias  := (cAliasTmp)->PGATE5DIAS
+            EndIf
+
+
+            ///////////////////////////
+            ///////////////////////////
+            // valor total de compras
+            /////////////////////////// //////-----------------------------------------------------
+            cQuery := " "
+            cQuery  += "            Select SUM(VALOR) as TOTCOMPRA from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select SUM(E1_VALOR) as VALOR"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalPago  := (cAliasTmp)->TOTCOMPRA
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // valor total de compras ultimos 24 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(VALOR) as VLRTOTALCOMPRA24MES from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select SUM(E1_VALOR) as VALOR"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter + "           AND E1_EMISSAO >= '" + cDt24Meses + "'
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalPago  := (cAliasTmp)->VLRTOTALCOMPRA24MES
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // valor total de compras ultimos 12 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(VALOR) as VLRTOTALCOMPRA12MES from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select SUM(E1_VALOR) as VALOR"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery += enter + "         AND E1_EMISSAO >= '" + cDt12Meses + "' "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalPago  := (cAliasTmp)->VLRTOTALCOMPRA12MES
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // valor total de compras ultimos 6 meses
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(VALOR) as VLRTOTALCOMPRA6MES from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select SUM(E1_VALOR) as VALOR"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery += enter + "         AND E1_EMISSAO >= '" + cDt06Meses + "' "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalPago  := (cAliasTmp)->VLRTOTALCOMPRA6MES
+            EndIf
+
+
+
+            ///////////////////////////
+            ///////////////////////////
+            // // quantidade de compras
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select COUNT(VALOR) as QTDCOMPRAS from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"        Select COUNT(*) as VALOR"
+                cQuery  +=  enter +"               from SF2"+aEmpresas[nx]+"0 SF2"
+                cQuery  +=  enter +"               INNER JOIN SA1010 SA1 "
+                cQuery  +=  enter +"                    on SF2.F2_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"                   and SF2.F2_LOJA  = SA1.A1_LOJA"
+
+                cQuery  +=  enter +"           where SA1.D_E_L_E_T_ = '' "
+                cQuery  +=  enter +"               and SA1.A1_CGC = '" + cCGC + "' "
+                cQuery  +=  enter +"               AND (SELECT count(*) "
+                cQuery  +=  enter +"                        FROM SE1"+aEmpresas[nx]+"0 " + " SE11 "
+                cQuery  +=  enter +"                        WHERE SE11.D_E_L_E_T_ = ' ' "
+                cQuery  +=  enter +"                        	AND E1_FILIAL = F2_FILIAL "'
+                cQuery  +=  enter +"                        	AND E1_NUM = F2_DUPL "
+                cQuery  +=  enter +"                        	AND E1_CLIENTE = F2_CLIENTE "
+                cQuery  +=  enter +"                        	AND E1_LOJA = F2_LOJA "
+                cQuery  +=  enter +"                        	AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"                        ) > 0 "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalPago  := (cAliasTmp)->QTDCOMPRAS
+            EndIf
+
+
+
+            //////////////////////////////////
+            //////////////////////////////////
+            //////////////////////////////////
+            //////////////////////////////////
+
+
+
+            ///////////////////////////
+            ///////////////////////////
+            // // quantidade de compras em aberto
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select COUNT(VALOR) as QTDCOMPABER from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"        Select COUNT(*) as VALOR"
+                cQuery  +=  enter +"               from SF2"+aEmpresas[nx]+"0 SF2"
+                cQuery  +=  enter +"               INNER JOIN SA1010 SA1 "
+                cQuery  +=  enter +"                    on SF2.F2_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"                   and SF2.F2_LOJA  = SA1.A1_LOJA"
+
+                cQuery  +=  enter +"           where SA1.D_E_L_E_T_ = '' "
+                cQuery  +=  enter +"               and SA1.A1_CGC = '" + cCGC + "' "
+                cQuery  +=  enter +"               AND (SELECT count(*) "
+                cQuery  +=  enter +"                        FROM SE1"+aEmpresas[nx]+"0 " + " SE11 "
+                cQuery  +=  enter +"                        WHERE SE11.D_E_L_E_T_ = ' ' "
+                cQuery  +=  enter +"                        	AND E1_FILIAL = F2_FILIAL "'
+                cQuery  +=  enter +"                        	AND E1_NUM = F2_DUPL "
+                cQuery  +=  enter +"                        	AND E1_CLIENTE = F2_CLIENTE "
+                cQuery  +=  enter +"                        	AND E1_LOJA = F2_LOJA "
+                cQuery  +=  enter +"             	            AND E1_STATUS = 'A' "
+                cQuery  +=  enter +"                        	AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"                        ) > 0 "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalPago  := (cAliasTmp)->QTDCOMPABER
+            EndIf
+
+
+
+
+            ///////////////////////////
+            ///////////////////////////
+            // // quantidade de compras pagas
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select COUNT(VALOR) as QTDCOMPPAGAS from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"        Select COUNT(*) as VALOR"
+                cQuery  +=  enter +"               from SF2"+aEmpresas[nx]+"0 SF2"
+                cQuery  +=  enter +"               INNER JOIN SA1010 SA1 "
+                cQuery  +=  enter +"                    on SF2.F2_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"                   and SF2.F2_LOJA  = SA1.A1_LOJA"
+
+                cQuery  +=  enter +"           where SA1.D_E_L_E_T_ = '' "
+                cQuery  +=  enter +"               and SA1.A1_CGC = '" + cCGC + "' "
+                cQuery  +=  enter +"               AND (SELECT count(*) "
+                cQuery  +=  enter +"                        FROM SE1"+aEmpresas[nx]+"0 " + " SE11 "
+                cQuery  +=  enter +"                        WHERE SE11.D_E_L_E_T_ = ' ' "
+                cQuery  +=  enter +"                        	AND E1_FILIAL = F2_FILIAL "'
+                cQuery  +=  enter +"                        	AND E1_NUM = F2_DUPL "
+                cQuery  +=  enter +"                        	AND E1_CLIENTE = F2_CLIENTE "
+                cQuery  +=  enter +"                        	AND E1_LOJA = F2_LOJA "
+                cQuery  +=  enter +"             	            AND E1_STATUS = 'A' "
+                cQuery  +=  enter +"                        	AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"                        ) = 0 "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalPago  := (cAliasTmp)->QTDCOMPPAGAS
+            EndIf
+
+
+
+            /////////////////////////////////
+            /////////////////////////////////
+            /////////////////////////////////
+
+                
+
+
+            ///////////////////////////
+            ///////////////////////////
+            // // quantidade de compras a prazo
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(VALOR) as QTDCOMPRZ from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"       SELECT COUNT(*) as VALOR FROM SC5"+aEmpresas[nx]+"0 SC5 "
+
+                cQuery  +=  enter +"               INNER JOIN SA1010 SA1 "
+                cQuery  +=  enter +"                    on SC5.C5_CLIENTE  = SA1.A1_COD"
+                cQuery  +=  enter +"                   and SC5.C5_LOJACLI  = SA1.A1_LOJA"
+                cQuery  +=  enter +"                   and SA1.D_E_L_E_T_ = ''"
+                cQuery  +=  enter +"                   and SA1.A1_CGC = '" + cCGC + "' "
+
+                cQuery  +=  enter +"           where SC5.D_E_L_E_T_ = '' "
+                cQuery  +=  enter + "         AND C5_NOTA NOT IN ('', 'XXXXXXXXX') "
+                cQuery  +=  enter + "         AND C5_CONDPAG NOT IN " + FormatIn(AllTrim(SuperGetMV("MV_AVISTA", .F., "")), ";")
+
+                //  cQuery  +=  enter +"        ) "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalPago  := (cAliasTmp)->QTDCOMPRZ
+            EndIf
+
+
+            ////////////////////////////////////////
+            ////////////////////////////////////////
+            ////////////////////////////////////////
+
+
+            ///////////////////////////
+            ///////////////////////////
+            // // quantidade de compras a prazo
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select MAX(DATRET) as DTATULIM from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"      SELECT MAX(ZN1_DTRETO) as DATRET  FROM FROM ZN1010 ZN1 "
+
+                cQuery  +=  enter +"               INNER JOIN SA1010 SA1 "
+                cQuery  +=  enter +"                    on ZN1_CLIENT  = SA1.A1_COD"
+                cQuery  +=  enter +"                   and ZN1_LOJA    = SA1.A1_LOJA"
+                cQuery  +=  enter +"                   and SA1.D_E_L_E_T_ = '' "
+
+                cQuery  +=  enter +"           where ZN1.D_E_L_E_T_ = '' "
+                Query += enter + "                  AND ZN1_RETANA IN ('C','R') "
+                cQuery  +=  enter +"                and SA1.A1_CGC = '" + cCGC + "' "
+
+                //  cQuery  +=  enter +"        ) "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalPago  := (cAliasTmp)->DTATULIM
+            EndIf
+            
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // valor total de compras
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select SUM(VALOR) as TOTCOMPRA from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select SUM(E1_VALOR) as VALOR"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalPago  := (cAliasTmp)->TOTCOMPRA
+            EndIf
+
+                
+            ///////////////////////////
+            ///////////////////////////
+            // maior atraso
+            ///////////////////////////
+            cQuery := " "
+            cQuery  += "            Select MAX(ATRASO) as MAIORATRASO from ( "
+            for nx := 1 to nQuant
+                cQuery  +=  enter +"            Select MAX(DATEDIFF(day, E1_VENCREA, E1_BAIXA) as ATRASO"
+                cQuery  +=  enter +"                    from SE1"+aEmpresas[nx]+"0 SE1"
+                cQuery  += ""
+                cQuery  +=  enter +"                    INNER JOIN SA1010 SA1"
+                cQuery  +=  enter +"                on SE1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SE1.E1_CLIENTE = SA1.A1_COD"
+                cQuery  +=  enter +"            and SE1.E1_LOJA  = SA1.A1_LOJA"
+                cQuery  +=  enter + "     	    AND E1_SALDO = 0 "
+                cQuery  +=  enter + "     	    AND E1_BAIXA > E1_VENCREA "
+                cQuery  +=  enter + "           AND E1_TIPO NOT IN " + cTipos
+                cQuery  +=  enter +"            where SA1.D_E_L_E_T_ <> '*'"
+                cQuery  +=  enter +"            and SA1.A1_CGC = '" + cCGC + "' "
+
+                if nx < nQuant
+                    cQuery += enter + " UNION ALL "
+                endif
+            next
+            cQuery += enter + " ) SE "
+
+            MemoWrite("C:\temp\query_api_neocredit.txt", cQuery)
+            cQuery := ChangeQuery(cQuery)
+
+            Iif( Select(cAliasTmp) <> 0, (cAliasTmp)->(DbCloseArea()),  )
+            DbUseArea(.T.,"TOPCONN",TcGenQry(,,cQuery),cAliasTmp,.F.,.T.)
+
+            (cAliasTmp)->(DbGoTop())
+            If ! (cAliasTmp)->(Eof())
+                nvalorTotalPago  := (cAliasTmp)->MAIORATRASO
+            EndIf
+
+
+                // while ! (cAliasTmp)->(Eof())
+                //     crazao       := AllTrim((cAliasTmp)->A1_NOME)
+                //     cidCliente   := AllTrim((cAliasTmp)->A1_COD) + AllTrim((cAliasTmp)->A1_LOJA)
+                //     ccnpj        := AllTrim((cAliasTmp)->A1_CGC) 
+                //     nlimiteCredito       := (cAliasTmp)->A1_LC
+                //     cdataValidadeLimite  := DToC(SToD((cAliasTmp)->A1_VENCLC))
+                //     cdataAtualizacaoLimite   := DToC(SToD((cAliasTmp)->DTATULIM)) ///
+
+                //     crisco       := AllTrim((cAliasTmp)->A1_RISCO) 
+                //     cdataPrimeiraCompra  := DToC(SToD((cAliasTmp)->A1_PRICOM))
+                //     cdataCadastro        := DToC(SToD((cAliasTmp)->A1_DTCAD)) 
+                //     cdataUltimaCompra    := DToC(SToD((cAliasTmp)->A1_ULTCOM))
+                //     nvalorTotalPago      += (cAliasTmp)->VLRTOTALPAGO
+                //     nvalorTotalPago24meses       += (cAliasTmp)->VLRTOTALPAGO24MES
+                //     nvalorTotalPago12meses       += (cAliasTmp)->VLRTOTALPAGO12MES
+                //     nvalorTotalPago6meses        += (cAliasTmp)->VLRTOTALPAGO6MES
+                //     nvalorTotalAberto            += (cAliasTmp)->SALDO_ABERTO
+                //     npercentualLimiteDisponivel  := Round( If((((cAliasTmp)->A1_LC - ((cAliasTmp)->A1_SALDUP + (cAliasTmp)->A1_SALPEDL)) / (cAliasTmp)->A1_LC) > 0, (((cAliasTmp)->A1_LC - ((cAliasTmp)->A1_SALDUP + (cAliasTmp)->A1_SALPEDL)) / (cAliasTmp)->A1_LC), 0) * 100 , 2)
+                //     nlimiteDisponivel        := Round( If(((cAliasTmp)->A1_LC - ((cAliasTmp)->A1_SALDUP + (cAliasTmp)->A1_SALPEDL)) > 0, ((cAliasTmp)->A1_LC - ((cAliasTmp)->A1_SALDUP + (cAliasTmp)->A1_SALPEDL)), 0), 2)
+
+                //     lpossuiAtrasoAberto  := If( lpossuiAtrasoAberto , .T., (cAliasTmp)->VENC_ABERTO > 0 )
+
+                //     nmaiorAtraso         := Max( nmaiorAtraso, (cAliasTmp)->MATRABERTO )   //     If((cAliasTmp)->MATRABERTO > 0, (cAliasTmp)->MATRABERTO, 0)
+                //     nmediaAtraso         := Round(nMediaAtrasos, 2)
+                //     nmaiorAtrasoPago     := Max( nmaiorAtrasoPago, (cAliasTmp)->MAIORATRASO )    //(cAliasTmp)->MAIORATRASO
+                //     nmaiorAtrasoPago24meses      := Max( nmaiorAtrasoPago24meses, (cAliasTmp)->MATRPAGO24 )  //(cAliasTmp)->MATRPAGO24
+                //     nmaiorAtrasoPago12meses      := Max( nmaiorAtrasoPago12meses, (cAliasTmp)->MATRPAGO12 )  //(cAliasTmp)->MATRPAGO12
+                //     nvalorTotalCompras           += (cAliasTmp)->TOTCOMPRA
+                //     nvalorTotalCompras24meses        += (cAliasTmp)->VLRTOTALCOMPRA24MES
+                //     nvalorTotalCompras12meses        += (cAliasTmp)->VLRTOTALCOMPRA12MES
+                //     nvalorTotalCompras6meses         += (cAliasTmp)->VLRTOTALCOMPRA6MES  
+                //     npercentualPagamentosPontuais            := Round( If(((cAliasTmp)->TOTPGTPONT / (cAliasTmp)->TOTALPGTOS) > 0, ((cAliasTmp)->TOTPGTPONT / (cAliasTmp)->TOTALPGTOS), 0) * 100, 2)
+                //     npercentualPagamentosPontuais24meses     := Round( If(((cAliasTmp)->PGTPONT24 / (cAliasTmp)->TOTPGTOS24) > 0, ((cAliasTmp)->PGTPONT24 / (cAliasTmp)->TOTPGTOS24), 0) * 100, 2)
+                //     npercentualPagamentosPontuais12meses     := Round( If(((cAliasTmp)->PGTPONT12 / (cAliasTmp)->PGTOS12MESES) > 0, ((cAliasTmp)->PGTPONT12 / (cAliasTmp)->PGTOS12MESES), 0) * 100, 2)
+                //     npercentualPagamentosPontuais6meses      := Round( If(((cAliasTmp)->PGTPONT06 / (cAliasTmp)->TOTPGTOS06) > 0, ((cAliasTmp)->PGTPONT06 / (cAliasTmp)->TOTPGTOS06), 0) * 100, 2)
+                //     npercentualPagamentosPagosAte5dias       := Round( If(((cAliasTmp)->PGATE5DIAS / (cAliasTmp)->PGTOS12MESES) > 0, ((cAliasTmp)->PGATE5DIAS / (cAliasTmp)->PGTOS12MESES), 0) * 100, 2)
+                //     nquantidadeCompras           += (cAliasTmp)->QTDCOMPRAS
+                //     nquantidadeComprasPagas      += (cAliasTmp)->QTDCOMPPAGAS
+                //     nquantidadeComprasAberto     += (cAliasTmp)->QTDCOMPABER
+                //     nquantidadeComprasPrazo      += (cAliasTmp)->QTDCOMPRZ
+
+
+                //     (cAliasTmp)->(DbSkip())
+                // end
+                
+                nvalorCompraMediaMensal      := Round(nvalorTotalCompras / DateDiffMonth(Date(), SToD(cdataPrimeiraCompra)), 2) ///
+
+                jResponse["dados"] := JsonObject():New()
+                jResponse["dados"]["razao"]     := crazao                                       // Razão social
+                jResponse["dados"]["idCliente"] := cidCliente     // Codigo + Loja
+                jResponse["dados"]["cnpj"]      := ccnpj                                         // CPF/CNPJ
+                jResponse["dados"]["limiteCredito"] := nlimiteCredito                                           // Valor de limite de crédito
+                jResponse["dados"]["dataValidadeLimite"]    := cdataValidadeLimite                      // Data de vencimento do limite de crédito
+                jResponse["dados"]["dataAtualizacaoLimite"] := cdataAtualizacaoLimite                    // Data atualização do limite
+
+                jResponse["dados"]["risco"] := crisco                                       // Risco do cliente
+                jResponse["dados"]["dataPrimeiraCompra"]:= cdataPrimeiraCompra                      // Data da primeira conta
+                jResponse["dados"]["dataCadastro"]      := cdataCadastro                             // Data de cadastro do cliente
+                jResponse["dados"]["dataUltimaCompra"]  := cdataUltimaCompra                        // Data da ultima compra
+                jResponse["dados"]["valorTotalPago"]    := nvalorTotalPago
+                jResponse["dados"]["valorTotalPago24meses"] := nvalorTotalPago24meses
+                jResponse["dados"]["valorTotalPago12meses"] := nvalorTotalPago12meses
+                jResponse["dados"]["valorTotalPago6meses"]  := nvalorTotalPago6meses
+                jResponse["dados"]["valorCompraMediaMensal"] := nvalorCompraMediaMensal
+                jResponse["dados"]["valorTotalAberto"] := nvalorTotalAberto
+                jResponse["dados"]["percentualLimiteDisponivel"] := npercentualLimiteDisponivel
+                jResponse["dados"]["limiteDisponivel"] := nlimiteDisponivel
+
+                jResponse["dados"]["possuiAtrasoAberto"] := lpossuiAtrasoAberto
+                jResponse["dados"]["maiorAtraso"] := nmaiorAtraso
+                jResponse["dados"]["mediaAtraso"] := nmediaAtraso
+                jResponse["dados"]["maiorAtrasoPago"] := nmaiorAtrasoPago
+                jResponse["dados"]["maiorAtrasoPago24meses"] := nmaiorAtrasoPago24meses
+                jResponse["dados"]["maiorAtrasoPago12meses"] := nmaiorAtrasoPago12meses
+                jResponse["dados"]["valorTotalCompras"] := nvalorTotalCompras
+                jResponse["dados"]["valorTotalCompras24meses"] := nvalorTotalCompras24meses
+                jResponse["dados"]["valorTotalCompras12meses"] := nvalorTotalCompras12meses
+                jResponse["dados"]["valorTotalCompras6meses"]  := nvalorTotalCompras6meses
+                jResponse["dados"]["percentualPagamentosPontuais"] := npercentualPagamentosPontuais
+                jResponse["dados"]["percentualPagamentosPontuais24meses"] := npercentualPagamentosPontuais24meses
+                jResponse["dados"]["percentualPagamentosPontuais12meses"] := npercentualPagamentosPontuais12meses
+                jResponse["dados"]["percentualPagamentosPontuais6meses"]  := npercentualPagamentosPontuais6meses
+                jResponse["dados"]["percentualPagamentosPagosAte5dias"]   := npercentualPagamentosPagosAte5dias
+                jResponse["dados"]["quantidadeCompras"] := nquantidadeCompras
+                // jResponse["dados"]["quantidadeComprasPagas"] := (cAliasTmp)->A1_NROPAG
+                jResponse["dados"]["quantidadeComprasPagas"]  := nquantidadeComprasPagas
+                jResponse["dados"]["quantidadeComprasAberto"] := nquantidadeComprasAberto
+                jResponse["dados"]["quantidadeComprasPrazo"]  := nquantidadeComprasPrazo
+
+                jResponse["message"] := "Sucesso."
+
+                // grava log
+                fLogMsg("Retornada analise de historico do Cliente " + cCGC, "02")
+
+            // Else
+            //     lRet                 := .F.
+            //     cCodErro             := 400 // Bad Request
+            //     jResponse["message"] := "Cliente não encontrado na base."
+            //     // grava log
+            //     fLogMsg(jResponse["message"], "03")
+            // EndIf
+        Else
+            lRet                 := .F.
+            cCodErro             := 400 // Bad Request
+            jResponse["message"] := "O CPF/CNPJ informado não é válido."
+            // grava log
+            fLogMsg(jResponse["message"], "04")
+        EndIf
+            
+    Else
+        lRet                 := .F.
+        cCodErro             := 400 // Bad Request
+        jResponse["message"] := "Não foi possível ler o conteúdo do header."
+        // grava log
+        fLogMsg(jResponse["message"], "06")
+    EndIf
+
+    Iif(Select(cAliasTmp) > 0, (cAliasTmp)->(DbCloseArea()), )
+    Iif(Select(cAliasTmpMATR) > 0, (cAliasTmpMATR)->(DbCloseArea()), )
+
+    // atualiza status de retorno
+    jResponse["success"] := lRet
+
+Return {JResponse, cCodErro}
+
+
+
+/*/{Protheus.doc} fLogMsg
+    Exibi log no consilole
+    @type function
+    @version 1.0
+    @author Daniel Scheeren - Gruppe
+    @since 8/25/2023
+    @param cMsg, character, mensagem
+    @param cID, character, id da mensagem
+    @return variant, return_description
+    /*/
+Static Function fLogMsg(cMsg, cID)
+    LogMsg(FunName(), 22, 6, 1, cID, "", "NEOCREDIT (" + FwCodFil() + ") -> " + cMsg)
+Return Nil
+
+
+/*/{Protheus.doc} RetCamposSAOConsult
+    Adiciona somente os campo validos da tabela SAO
+    @type function
+    @version 1.0
+    @author Daniel Scheeren - Gruppe
+    @since 9/22/2023
+    @param aFieldsSAO, array, Campos a desconsiderar
+    @return variant, return_description
+/*/
+Static Function RetCamposSAOConsulta(aFieldsSAOExc, cCampo, aFieldsSAO)
+
+    If aScan(aFieldsSAOExc, {|cFldExc| cCampo == cFldExc}) == 0
+        AAdd(aFieldsSAO, cCampo)
+    EndIf
+    
+Return Nil
+
+
+/*/{Protheus.doc} RetTelefonesDoCliente
+    Gera uma lista com todos os telefones do cliente e telefones dos contatos do cliente
+    @type function
+    @version 1.0
+    @author Daniel Scheeren - Gruppe
+    @since 10/19/2023
+    @param cCGC, character, Cpf/Cnpj
+    @return variant, return_description
+/*/
+Static Function RetTelefonesDoCliente(cCGC)
+
+    Local cQryTelefCli := ""
+    Local aTelefones   := {}
+
+    cQryTelefCli := " SELECT DDD, TELEFONE
+    cQryTelefCli += " FROM (
+    cQryTelefCli += "     SELECT 
+    cQryTelefCli += "         A1_DDD, A1_TEL, A1_FAX, U5_DDD, U5_FONE, U5_CELULAR, U5_FCOM1, U5_FCOM2, AGB_DDD, AGB_TELEFO
+    cQryTelefCli += "     FROM " + RetSqlTab("SU5")
+    cQryTelefCli += "     INNER JOIN " + RetSqlTab("AC8")
+    cQryTelefCli += "                     ON AC8.AC8_FILIAL = SUBSTRING(SU5.U5_FILIAL,1,2)
+    cQryTelefCli += "                     AND AC8.AC8_CODCON = SU5.U5_CODCONT
+    cQryTelefCli += "                     AND AC8.AC8_ENTIDA = 'SA1'
+    cQryTelefCli += "                     AND AC8.D_E_L_E_T_ = '' 
+    cQryTelefCli += "     INNER JOIN " + RetSqlTab("SA1")
+    cQryTelefCli += "                     ON SA1.A1_FILIAL = AC8.AC8_FILENT
+    cQryTelefCli += "                     AND SA1.A1_COD + SA1.A1_LOJA = AC8.AC8_CODENT
+    cQryTelefCli += "                     AND SA1.D_E_L_E_T_ = '' 
+    cQryTelefCli += "     LEFT JOIN " + RetSqlTab("AGB")
+    cQryTelefCli += "                     ON AGB_FILIAL = SUBSTRING(SU5.U5_FILIAL,1,2)
+    cQryTelefCli += "                     AND AGB_CODENT = SU5.U5_CODCONT
+    cQryTelefCli += "                     AND AGB_ENTIDA = 'SU5'
+    cQryTelefCli += "                     AND AGB.D_E_L_E_T_ = ''
+    cQryTelefCli += "     WHERE SU5.U5_ATIVO = '1' 
+    cQryTelefCli += "     AND A1_CGC = '" + cCGC + "'
+    cQryTelefCli += "     AND " + RetSqlCond("SA1")
+    cQryTelefCli += "     GROUP BY A1_DDD, A1_TEL, A1_FAX, U5_DDD, U5_FONE, U5_CELULAR, U5_FCOM1, U5_FCOM2, AGB_DDD, AGB_TELEFO
+    cQryTelefCli += " ) AS TELEFONES
+    cQryTelefCli += " UNPIVOT (TELEFONE FOR COLUNASTEL IN (A1_TEL, A1_FAX, U5_FONE, U5_CELULAR, U5_FCOM1, U5_FCOM2, AGB_TELEFO)) AS TELUNPVT
+    cQryTelefCli += " UNPIVOT (DDD FOR COLUNASDDD IN (A1_DDD, U5_DDD, AGB_DDD)) AS TELUNPVT2
+    cQryTelefCli += " WHERE TELEFONE <> ''
+    cQryTelefCli += " GROUP BY DDD, TELEFONE
+    cQryTelefCli := ChangeQuery(cQryTelefCli)
+    
+    aTelefones := U_SqlToVet(cQryTelefCli)
+    
+Return aTelefones
